@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+#include "mt7621.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	compatible = "vertell,vt-mt7621d", "mediatek,mt7621-soc";
+	model = "Vertell VT-STREET-M2";
+
+	aliases {
+		led-boot = &led_system;
+		led-failsafe = &led_system;
+		led-running = &led_system;
+		led-upgrade = &led_system;
+		label-mac-device = &gmac0;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			gpios = <&gpio 4 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_system: system {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_STATUS;
+			gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_inet: internet {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_WAN;
+			gpios = <&gpio 14 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio-export {
+		compatible = "gpio-export";
+		#size-cells = <0>;
+
+		sim-variant {
+			gpio-export,name = "sim_variant";
+			gpios = <&gpio 3 GPIO_ACTIVE_HIGH>;
+		};
+
+		power-usb {
+			gpio-export,name = "power_usb";
+			gpio-export,output = <1>;
+			gpios = <&gpio 5 GPIO_ACTIVE_HIGH>;
+		};
+
+		sim-select {
+			gpio-export,name = "sim_select";
+			gpio-export,output = <1>;
+			gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&nand {
+	status = "okay";
+
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "u-boot";
+			reg = <0x0000000 0x0080000>;
+			read-only;
+		};
+
+		partition@80000 {
+			label = "Config";
+			reg = <0x0080000 0x0080000>;
+		};
+
+		partition@100000 {
+			label = "Factory";
+			reg = <0x0100000 0x0080000>;
+			read-only;
+
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				macaddr_factory_28: macaddr@28 {
+					reg = <0x28 0x6>;
+				};
+			};
+		};
+
+		partition@180000 {
+			label = "firmware";
+			reg = <0x0180000 0x7680000>;
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "kernel";
+				reg = <0x0000000 0x0400000>;
+			};
+
+			partition@400000 {
+				label = "ubi";
+				reg = <0x0400000 0x7280000>;
+			};
+		};
+
+		/* 0x07800000..0x08000000 intentionally remains unpartitioned. */
+	};
+};
+
+&gmac0 {
+	nvmem-cells = <&macaddr_factory_28>;
+	nvmem-cell-names = "mac-address";
+};
+
+&switch0 {
+	ports {
+		port@1 {
+			status = "okay";
+			label = "lan1";
+		};
+	};
+};
+
+&state_default {
+	gpio {
+		groups = "i2c", "jtag", "wdt", "uart3";
+		function = "gpio";
+	};
+};
+
+&pcie {
+	status = "disabled";
+};
