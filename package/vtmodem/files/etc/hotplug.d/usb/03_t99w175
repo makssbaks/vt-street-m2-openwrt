@@ -43,9 +43,6 @@ ensure_dynamic_id()
 		return 1
 	}
 
-	# Writing a duplicate id is harmless on kernels which do not expose
-	# dynamic ids through a readable list. Ignore EEXIST-style failures if
-	# the serial ports are already present.
 	echo "05c6 9025" >"$IDFILE" 2>/dev/null || {
 		[ -e /sys/class/tty/ttyUSB0 ] || return 1
 	}
@@ -130,6 +127,46 @@ ready_state()
 	return 0
 }
 
+ensure_network_config()
+{
+	changed=0
+
+	if ! uci -q get network.modem >/dev/null 2>&1; then
+		uci -q set network.modem='interface'
+		uci -q set network.modem.proto='t99w175qmi'
+		uci -q set network.modem.auth='none'
+		uci -q set network.modem.pdptype='ip'
+		uci -q set network.modem.apn='internet'
+		uci -q commit network
+		changed=1
+		log "created default network.modem (T99W175 QMI, APN internet, IPv4)"
+	fi
+
+	wan_idx="$(uci -q show firewall 2>/dev/null | \
+		sed -n "s/^firewall\.@zone\[\([0-9][0-9]*\)\]\.name='wan'$/\1/p" | head -n1)"
+	if [ -n "$wan_idx" ]; then
+		nets="$(uci -q get "firewall.@zone[$wan_idx].network" 2>/dev/null)"
+		case " $nets " in
+			*" modem "*) ;;
+			*)
+				uci -q add_list "firewall.@zone[$wan_idx].network=modem"
+				uci -q commit firewall
+				changed=1
+				log "added modem to firewall wan zone"
+				;;
+		esac
+	fi
+
+	if [ "$changed" -eq 1 ]; then
+		ubus call network reload >/dev/null 2>&1 || true
+		/etc/init.d/firewall reload >/dev/null 2>&1 || true
+		(
+			sleep 2
+			ifup modem >/dev/null 2>&1 || true
+		) &
+	fi
+}
+
 main()
 {
 	MODEM="$(find_modem)"
@@ -140,6 +177,7 @@ main()
 	fi
 
 	if [ -f "$READYFILE" ] && ready_state "$MODEM"; then
+		ensure_network_config
 		exit 0
 	fi
 
@@ -183,6 +221,7 @@ main()
 	if ready_state "$MODEM"; then
 		echo "$(basename "$MODEM")" >"$READYFILE"
 		log "ready: AT=$(readlink -f /dev/t99w175-at) DIAG=$(readlink -f /dev/t99w175-diag 2>/dev/null) NMEA=$(readlink -f /dev/t99w175-nmea 2>/dev/null) QMI=/dev/cdc-wdm0 IF=wwan0"
+		ensure_network_config
 		return 0
 	fi
 
