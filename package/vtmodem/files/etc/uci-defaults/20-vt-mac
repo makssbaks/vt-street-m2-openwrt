@@ -1,0 +1,115 @@
+#!/bin/sh
+
+TAG="vt-mac"
+
+log()
+{
+	logger -t "$TAG" "$*"
+}
+
+factory_hex()
+{
+	local mtd
+	mtd="$(awk -F: '$2 ~ /"Factory"/ {print "/dev/" $1; exit}' /proc/mtd 2>/dev/null)"
+	[ -n "$mtd" ] || return 1
+	dd if="$mtd" bs=1 skip=40 count=6 2>/dev/null | hexdump -v -e '1/1 "%02x"'
+}
+
+factory_valid()
+{
+	local h="$1" first
+	[ "${#h}" -eq 12 ] || return 1
+	[ "$h" != "000000000000" ] || return 1
+	[ "$h" != "ffffffffffff" ] || return 1
+	first=$((0x${h%??????????}))
+	[ $((first & 1)) -eq 0 ]
+}
+
+find_t99_serial()
+{
+	local d
+	for d in /sys/bus/usb/devices/*; do
+		[ -f "$d/idVendor" ] || continue
+		[ -f "$d/idProduct" ] || continue
+		[ "$(cat "$d/idVendor" 2>/dev/null)" = "05c6" ] || continue
+		[ "$(cat "$d/idProduct" 2>/dev/null)" = "9025" ] || continue
+		cat "$d/serial" 2>/dev/null
+		return 0
+	done
+	return 1
+}
+
+derive_mac()
+{
+	local serial="$1" hash tail
+	if command -v sha256sum >/dev/null 2>&1; then
+		hash="$(printf '%s' "$serial" | sha256sum | awk '{print $1}')"
+	elif command -v md5sum >/dev/null 2>&1; then
+		hash="$(printf '%s' "$serial" | md5sum | awk '{print $1}')"
+	else
+		return 1
+	fi
+
+	tail="$(printf '%s' "$hash" | cut -c1-10)"
+	[ "${#tail}" -eq 10 ] || return 1
+	printf '02:%s:%s:%s:%s:%s\n' \
+		"$(printf '%s' "$tail" | cut -c1-2)" \
+		"$(printf '%s' "$tail" | cut -c3-4)" \
+		"$(printf '%s' "$tail" | cut -c5-6)" \
+		"$(printf '%s' "$tail" | cut -c7-8)" \
+		"$(printf '%s' "$tail" | cut -c9-10)"
+}
+
+set_bridge_mac()
+{
+	local mac="$1" idx name
+	idx=0
+	while uci -q get "network.@device[$idx]" >/dev/null 2>&1; do
+		name="$(uci -q get "network.@device[$idx].name")"
+		if [ "$name" = "br-lan" ]; then
+			uci set "network.@device[$idx].macaddr=$mac"
+			uci set "network.lan.macaddr=$mac"
+			uci commit network
+			return 0
+		fi
+		idx=$((idx + 1))
+	done
+
+	uci set "network.lan.macaddr=$mac"
+	uci commit network
+}
+
+FACTORY="$(factory_hex)"
+if factory_valid "$FACTORY"; then
+	log "valid Factory MAC present; fallback not needed"
+	exit 0
+fi
+
+# On blank-Factory T99 units, derive a deterministic locally-administered
+# LAN MAC from the modem USB serial.  uci-defaults runs before netifd starts,
+# so the bridge comes up with the stable address on the first clean boot.
+SERIAL=""
+i=0
+while [ "$i" -lt 15 ]; do
+	SERIAL="$(find_t99_serial)"
+	[ -n "$SERIAL" ] && break
+	sleep 1
+	i=$((i + 1))
+done
+
+if [ -z "$SERIAL" ]; then
+	log "blank Factory MAC and no T99 USB serial yet; leaving defaults script for retry"
+	exit 1
+fi
+
+MAC="$(derive_mac "$SERIAL")"
+if [ -z "$MAC" ]; then
+	log "unable to derive deterministic MAC from T99 serial"
+	exit 1
+fi
+
+set_bridge_mac "$MAC" || exit 1
+printf '%s\n' "$MAC" >/etc/vt-street-m2.mac
+chmod 0644 /etc/vt-street-m2.mac
+log "provisioned deterministic LAN MAC $MAC from T99 USB serial"
+exit 0
