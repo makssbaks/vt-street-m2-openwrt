@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -13,12 +14,25 @@
 #define DEFAULT_TIMEOUT_MS 1500
 #define MAX_TIMEOUT_MS 120000
 #define BUF_SIZE 8192
+#define LOCK_FILE "/tmp/vtmodem-at.lock"
 
 static long long now_ms(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+static int acquire_lock(void)
+{
+    int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0600);
+    if (fd < 0)
+        return -1;
+    if (flock(fd, LOCK_EX) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
 }
 
 static int write_all(int fd, const char *buf, size_t len)
@@ -164,7 +178,7 @@ int main(int argc, char **argv)
     const char *cmd;
     struct termios oldtio, tio;
     char buf[BUF_SIZE];
-    int fd, rc;
+    int fd, rc, lockfd;
     int timeout_ms = DEFAULT_TIMEOUT_MS;
     int argi = 1;
 
@@ -202,15 +216,23 @@ int main(int argc, char **argv)
         return 64;
     }
 
+    lockfd = acquire_lock();
+    if (lockfd < 0) {
+        perror("modem lock");
+        return 1;
+    }
+
     fd = open(dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
         perror(dev);
+        close(lockfd);
         return 1;
     }
 
     if (tcgetattr(fd, &oldtio) < 0) {
         perror("tcgetattr");
         close(fd);
+        close(lockfd);
         return 1;
     }
 
@@ -228,6 +250,7 @@ int main(int argc, char **argv)
     if (tcsetattr(fd, TCSANOW, &tio) < 0) {
         perror("tcsetattr");
         close(fd);
+        close(lockfd);
         return 1;
     }
 
@@ -242,6 +265,7 @@ int main(int argc, char **argv)
 
     (void)tcsetattr(fd, TCSANOW, &oldtio);
     close(fd);
+    close(lockfd);
 
     if (rc < 0) {
         perror("AT transaction");
