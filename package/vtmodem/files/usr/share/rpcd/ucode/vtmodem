@@ -1,0 +1,114 @@
+'use strict';
+
+import { access, basename, dirname, glob, popen, readfile } from 'fs';
+
+function shellquote(s) {
+	return `'${replace(s ?? '', "'", "'\\''")}'`;
+}
+
+function command(cmd) {
+	let fd = popen(`/usr/bin/vt-at ${shellquote(cmd)} 2>/dev/null`);
+	if (!fd)
+		return '';
+
+	let out = trim(fd.read('all') ?? '');
+	fd.close();
+	return out;
+}
+
+function value(cmd, prefix) {
+	let out = command(cmd);
+	if (!length(out))
+		return '';
+
+	let lines = split(out, '\n');
+	for (let line in lines) {
+		line = trim(line);
+		if (!length(line) || line == 'ERROR')
+			continue;
+		if (prefix && index(line, prefix) == 0)
+			return trim(substr(line, length(prefix)));
+		if (!prefix)
+			return line;
+	}
+	return '';
+}
+
+function lines(cmd, prefix) {
+	let out = command(cmd);
+	let result = [];
+
+	for (let line in split(out, '\n')) {
+		line = trim(line);
+		if (!length(line) || line == 'ERROR')
+			continue;
+		if (!prefix || index(line, prefix) == 0)
+			push(result, line);
+	}
+
+	return result;
+}
+
+function find_l860_usb() {
+	for (let p in glob('/sys/bus/usb/devices/*/idVendor')) {
+		let d = dirname(p);
+		let vid = trim(readfile(p) ?? '');
+		let pid = trim(readfile(`${d}/idProduct`) ?? '');
+
+		if (vid == '8087' && pid == '095a')
+			return basename(d);
+	}
+	return '';
+}
+
+function find_data_if() {
+	for (let p in glob('/sys/class/net/*/address')) {
+		if (lc(trim(readfile(p) ?? '')) == '00:00:11:12:13:14')
+			return basename(dirname(p));
+	}
+	return access('/sys/class/net/wwan0') ? 'wwan0' : '';
+}
+
+const methods = {
+	status: {
+		call: function() {
+			let usb = find_l860_usb();
+			let present = length(usb) > 0 && access('/dev/ttyACM0');
+			let data_if = find_data_if();
+			let data_mac = data_if ? trim(readfile(`/sys/class/net/${data_if}/address`) ?? '') : '';
+
+			if (!present) {
+				return {
+					present: false,
+					usb_id: usb ? '8087:095a' : '',
+					at_port: access('/dev/ttyACM0') ? '/dev/ttyACM0' : '',
+					data_interface: data_if,
+					data_mac
+				};
+			}
+
+			return {
+				present: true,
+				type: 'fibocom-l860',
+				usb_id: '8087:095a',
+				usb_device: usb,
+				at_port: '/dev/ttyACM0',
+				data_interface: data_if,
+				data_mac,
+				manufacturer: value('AT+CGMI'),
+				model: value('AT+CGMM'),
+				firmware: value('AT+CGMR'),
+				imei: value('AT+CGSN'),
+				cfun: value('AT+CFUN?', '+CFUN:'),
+				sim_state: value('AT+CPIN?', '+CPIN:'),
+				iccid: value('AT+CCID', '+CCID:'),
+				imsi: value('AT+CIMI'),
+				attached: value('AT+CGATT?', '+CGATT:'),
+				pdp_contexts: lines('AT+CGDCONT?', '+CGDCONT:'),
+				dns: lines('AT+XDNS?', '+XDNS:')
+			};
+		}
+	}
+};
+
+return { 'vtmodem': methods };
