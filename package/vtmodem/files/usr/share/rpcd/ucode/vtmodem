@@ -110,6 +110,7 @@ function common_status(m) {
 		control_device: m.control_device,
 		data_interface: m.data_interface,
 		data_mac,
+		sms_supported: m.type == 't99w175',
 		manufacturer: value(dev, 'AT+CGMI'),
 		model: value(dev, 'AT+CGMM'),
 		firmware: value(dev, 'AT+CGMR'),
@@ -128,6 +129,25 @@ function common_status(m) {
 	};
 }
 
+function sms_call(m, args) {
+	if (!m || m.type != 't99w175')
+		return { ok: false, supported: false, error: 'SMS backend currently supports T99W175 only' };
+
+	let cmd = `/usr/bin/vt-sms -d ${shellquote(m.at_port)} ${args} 2>/dev/null`;
+	let fd = popen(cmd);
+	if (!fd)
+		return { ok: false, supported: true, error: 'Unable to start vt-sms' };
+
+	let out = trim(fd.read('all') ?? '');
+	fd.close();
+	if (!length(out))
+		return { ok: false, supported: true, error: 'No response from vt-sms' };
+
+	let result = json(out);
+	result.supported = true;
+	return result;
+}
+
 const methods = {
 	status: {
 		call: function() {
@@ -141,7 +161,8 @@ const methods = {
 					at_port: '',
 					control_device: '',
 					data_interface: '',
-					data_mac: ''
+					data_mac: '',
+					sms_supported: false
 				};
 			}
 
@@ -165,6 +186,40 @@ const methods = {
 			}
 
 			return s;
+		}
+	},
+
+	sms_list: {
+		call: function() {
+			return sms_call(detect_modem(), 'list');
+		}
+	},
+
+	sms_send: {
+		args: {
+			phone: '',
+			text: ''
+		},
+		call: function(request) {
+			let phone = request.args.phone ?? '';
+			let text = request.args.text ?? '';
+			if (!length(phone) || !length(text))
+				return { ok: false, error: 'Phone number and SMS text are required' };
+			if (length(text) > 16384)
+				return { ok: false, error: 'SMS text is too large' };
+			return sms_call(detect_modem(), `send ${shellquote(phone)} ${shellquote(text)}`);
+		}
+	},
+
+	sms_delete: {
+		args: {
+			id: 0
+		},
+		call: function(request) {
+			let id = request.args.id;
+			if (id < 0 || id > 65535)
+				return { ok: false, error: 'Invalid SMS id' };
+			return sms_call(detect_modem(), `delete ${id}`);
 		}
 	}
 };
