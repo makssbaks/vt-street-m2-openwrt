@@ -36,6 +36,24 @@ fi
   tar -tf "$SYSUPGRADE"
 } | tee "$ARTIFACT_DIR/VALIDATION.txt"
 
+UPGRADE_FILE="$OPENWRT_DIR/target/linux/ramips/mt7621/base-files/lib/upgrade/platform.sh"
+python3 - "$UPGRADE_FILE" <<'PY' | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+entry = '\tvertell,vt-mt7621d|\\\n'
+start = s.find(entry)
+end = s.find('\n\t\t;;', start)
+print('\n===== SYSUPGRADE ROUTING =====')
+if start < 0 or end < 0:
+    raise SystemExit('ERROR: VT-STREET-M2 missing from platform_do_upgrade')
+block = s[start:end]
+if 'nand_do_upgrade "$1"' not in block:
+    raise SystemExit('ERROR: VT-STREET-M2 does not use nand_do_upgrade')
+print('vertell,vt-mt7621d -> nand_do_upgrade: OK')
+PY
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -93,5 +111,6 @@ fi
   echo
   echo '===== RESULT ====='
   echo 'Basic build checks passed.'
+  echo 'VT-STREET-M2 NAND sysupgrade routing validated.'
   echo 'FLASHING IS NOT YET APPROVED; inspect DTB/MTD and sysupgrade metadata first.'
 } | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
