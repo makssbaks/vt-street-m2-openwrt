@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -9,13 +9,13 @@ define Package/vtmodem
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=VT-STREET-M2 modem backend and LuCI interface
-  DEPENDS:=+luci-base +rpcd
+  DEPENDS:=+luci-base +rpcd +kmod-usb-acm +kmod-usb-net-cdc-ncm +kmod-usb-net-qmi-wwan +kmod-usb-serial-option
 endef
 
 define Package/vtmodem/description
   Vendor-independent modem backend for VT-STREET-M2.
   Supports Fibocom L860-GL-16 and Dell/Foxconn T99W175 detection,
-  modem telemetry and T99 SMS PDU operations.
+  modem telemetry, T99 USB binding and T99 SMS PDU operations.
 endef
 
 define Build/Prepare
@@ -36,6 +36,10 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-at $(1)/usr/bin/vt-at
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-sms $(1)/usr/bin/vt-sms
+
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/usb
+	$(INSTALL_BIN) ./files/etc/hotplug.d/usb/03_t99w175 \
+		$(1)/etc/hotplug.d/usb/03_t99w175
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
 	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/vtmodem $(1)/usr/share/rpcd/ucode/vtmodem
