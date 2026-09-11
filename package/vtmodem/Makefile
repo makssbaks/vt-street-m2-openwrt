@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -34,8 +34,10 @@ endef
 
 define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-at $(1)/usr/bin/vt-at
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-sms $(1)/usr/bin/vt-sms
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-at $(1)/usr/bin/vt-at.real
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vt-sms $(1)/usr/bin/vt-sms.real
+	$(INSTALL_BIN) ./files/usr/bin/vt-at-locked $(1)/usr/bin/vt-at
+	$(INSTALL_BIN) ./files/usr/bin/vt-sms-locked $(1)/usr/bin/vt-sms
 
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/usb
 	$(INSTALL_BIN) ./files/etc/hotplug.d/usb/03_t99w175 \
