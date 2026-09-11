@@ -1,9 +1,14 @@
 {
   "luci-app-vtmodem": {
-    "description": "Grant access to VT modem status",
+    "description": "Grant access to VT modem status and SMS",
     "read": {
       "ubus": {
-        "vtmodem": [ "status" ]
+        "vtmodem": [ "status", "sms_list" ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "vtmodem": [ "sms_send", "sms_delete" ]
       }
     }
   }
