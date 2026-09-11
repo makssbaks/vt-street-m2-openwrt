@@ -83,12 +83,13 @@ function detect_modem() {
 	}
 
 	usb = find_usb('05c6', '9025');
-	if (length(usb) && access('/dev/ttyUSB2')) {
+	let t99_at = access('/dev/t99w175-at') ? '/dev/t99w175-at' : (access('/dev/ttyUSB2') ? '/dev/ttyUSB2' : '');
+	if (length(usb) && length(t99_at)) {
 		return {
 			type: 't99w175',
 			usb_id: '05c6:9025',
 			usb_device: usb,
-			at_port: '/dev/ttyUSB2',
+			at_port: t99_at,
 			control_device: access('/dev/cdc-wdm0') ? '/dev/cdc-wdm0' : '',
 			data_interface: access('/sys/class/net/wwan0') ? 'wwan0' : ''
 		};
