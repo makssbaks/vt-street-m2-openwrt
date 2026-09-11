@@ -19,18 +19,19 @@ function text(v) {
 
 function row(label, value, mono) {
 	var rendered;
+
 	if (Array.isArray(value)) {
-		rendered = value.length ? value.map(function(v, i) {
-			return E('div', { 'class': mono ? 'text-monospace' : '' }, [ v ]);
-		}) : '-';
+		rendered = value.length ? value.map(function(v) {
+			return E('div', { 'class': mono ? 'text-monospace' : '' }, [ text(v) ]);
+		}) : [ '-' ];
 	}
 	else {
-		rendered = E('span', { 'class': mono ? 'text-monospace' : '' }, [ text(value) ]);
+		rendered = [ E('span', { 'class': mono ? 'text-monospace' : '' }, [ text(value) ]) ];
 	}
 
 	return E('tr', {}, [
 		E('td', { 'style': 'width:32%; font-weight:600' }, [ label ]),
-		E('td', {}, [ rendered ])
+		E('td', {}, rendered)
 	]);
 }
 
