@@ -107,17 +107,26 @@ if [[ -n "$DTB" ]]; then
   fi
 fi
 
-VT_SMS="$(find "$OPENWRT_DIR/build_dir" -type f -name vt-sms -perm -111 -print -quit 2>/dev/null || true)"
+# Export the compiled helper itself, not /usr/bin/vt-sms from the package
+# image (that path is the locking shell wrapper in vtmodem release >= 8).
+VT_SMS="$(find "$OPENWRT_DIR/build_dir" -type f -path '*/vtmodem/vt-sms' -perm -111 -print -quit 2>/dev/null || true)"
 if [[ -n "$VT_SMS" ]]; then
-  cp "$VT_SMS" "$ARTIFACT_DIR/vt-sms.mipsel"
+  cp "$VT_SMS" "$ARTIFACT_DIR/vt-sms.real.mipsel"
+  VT_SMS_FILE="$(file "$ARTIFACT_DIR/vt-sms.real.mipsel")"
   {
     echo
-    echo '===== VT-SMS HELPER ====='
-    file "$ARTIFACT_DIR/vt-sms.mipsel"
-    sha256sum "$ARTIFACT_DIR/vt-sms.mipsel"
+    echo '===== VT-SMS REAL HELPER ====='
+    echo "$VT_SMS_FILE"
+    sha256sum "$ARTIFACT_DIR/vt-sms.real.mipsel"
   } | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+
+  if [[ "$VT_SMS_FILE" != *ELF* || "$VT_SMS_FILE" != *MIPS* ]]; then
+    echo 'ERROR: exported vt-sms helper is not a MIPS ELF executable' | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
+    exit 1
+  fi
 else
-  echo 'WARNING: vt-sms helper binary not found for standalone export' | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+  echo 'ERROR: compiled vt-sms helper binary not found for standalone export' | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
+  exit 1
 fi
 
 {
