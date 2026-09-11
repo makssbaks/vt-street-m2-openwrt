@@ -1,0 +1,195 @@
+#!/bin/sh
+
+TAG="t99w175-hotplug"
+LOCKDIR="/tmp/t99w175-hotplug.lock"
+READYFILE="/tmp/t99w175-hotplug.ready"
+
+log()
+{
+	logger -t "$TAG" "$*"
+}
+
+remove_aliases()
+{
+	rm -f /dev/t99w175-at /dev/t99w175-diag /dev/t99w175-nmea
+}
+
+find_modem()
+{
+	for d in /sys/bus/usb/devices/*; do
+		[ -f "$d/idVendor" ] || continue
+		[ -f "$d/idProduct" ] || continue
+		[ "$(cat "$d/idVendor" 2>/dev/null)" = "05c6" ] || continue
+		[ "$(cat "$d/idProduct" 2>/dev/null)" = "9025" ] || continue
+		echo "$d"
+		return 0
+	done
+	return 1
+}
+
+ensure_drivers()
+{
+	[ -d /sys/bus/usb/drivers/qmi_wwan ] || modprobe qmi_wwan 2>/dev/null
+	[ -d /sys/bus/usb/drivers/option ] || modprobe option 2>/dev/null
+	sleep 1
+	[ -d /sys/bus/usb/drivers/option ]
+}
+
+ensure_dynamic_id()
+{
+	IDFILE="/sys/bus/usb-serial/drivers/option1/new_id"
+	[ -w "$IDFILE" ] || {
+		log "ERROR: option1/new_id unavailable"
+		return 1
+	}
+
+	# Writing a duplicate id is harmless on kernels which do not expose
+	# dynamic ids through a readable list. Ignore EEXIST-style failures if
+	# the serial ports are already present.
+	echo "05c6 9025" >"$IDFILE" 2>/dev/null || {
+		[ -e /sys/class/tty/ttyUSB0 ] || return 1
+	}
+	return 0
+}
+
+unbind_adb()
+{
+	dev="$1"
+	for i in "$dev":*; do
+		[ -d "$i" ] || continue
+		subclass="$(cat "$i/bInterfaceSubClass" 2>/dev/null)"
+		proto="$(cat "$i/bInterfaceProtocol" 2>/dev/null)"
+		[ "$subclass" = "42" ] || continue
+		[ "$proto" = "01" ] || continue
+		[ -L "$i/driver" ] || continue
+		driver="$(basename "$(readlink -f "$i/driver" 2>/dev/null)")"
+		[ "$driver" = "option" ] || continue
+		iface="$(basename "$i")"
+		if echo "$iface" >/sys/bus/usb/drivers/option/unbind 2>/dev/null; then
+			log "ADB interface released: $iface"
+		fi
+	done
+}
+
+adb_is_bound()
+{
+	dev="$1"
+	for i in "$dev":*; do
+		[ -d "$i" ] || continue
+		[ "$(cat "$i/bInterfaceSubClass" 2>/dev/null)" = "42" ] || continue
+		[ "$(cat "$i/bInterfaceProtocol" 2>/dev/null)" = "01" ] || continue
+		[ -L "$i/driver" ] && return 0
+	done
+	return 1
+}
+
+find_tty_by_protocol()
+{
+	wanted="$1"
+	for t in /sys/class/tty/ttyUSB*; do
+		[ -e "$t" ] || continue
+		tty="$(basename "$t")"
+		path="$(readlink -f "$t/device" 2>/dev/null)"
+		[ -n "$path" ] || continue
+		iface="$(dirname "$path")"
+		[ "$(cat "$iface/bInterfaceProtocol" 2>/dev/null)" = "$wanted" ] || continue
+		echo "/dev/$tty"
+		return 0
+	done
+	return 1
+}
+
+make_aliases()
+{
+	DIAG="$(find_tty_by_protocol 30)"
+	AT="$(find_tty_by_protocol 40)"
+	NMEA="$(find_tty_by_protocol 60)"
+
+	remove_aliases
+	[ -n "$DIAG" ] && ln -s "$DIAG" /dev/t99w175-diag
+	[ -n "$AT" ]   && ln -s "$AT"   /dev/t99w175-at
+	[ -n "$NMEA" ] && ln -s "$NMEA" /dev/t99w175-nmea
+	[ -n "$AT" ]
+}
+
+ready_state()
+{
+	dev="$1"
+	AT="$(readlink -f /dev/t99w175-at 2>/dev/null)"
+	[ -n "$AT" ] || return 1
+	[ -c "$AT" ] || return 1
+	[ -c /dev/cdc-wdm0 ] || return 1
+	[ -e /sys/class/net/wwan0 ] || return 1
+
+	T="$(basename "$AT")"
+	P="$(readlink -f "/sys/class/tty/$T/device" 2>/dev/null)"
+	[ -n "$P" ] || return 1
+	I="$(dirname "$P")"
+	[ "$(cat "$I/bInterfaceProtocol" 2>/dev/null)" = "40" ] || return 1
+	adb_is_bound "$dev" && return 1
+	return 0
+}
+
+main()
+{
+	MODEM="$(find_modem)"
+	if [ -z "$MODEM" ]; then
+		rm -f "$READYFILE"
+		remove_aliases
+		exit 0
+	fi
+
+	if [ -f "$READYFILE" ] && ready_state "$MODEM"; then
+		exit 0
+	fi
+
+	mkdir "$LOCKDIR" 2>/dev/null || exit 0
+	trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
+
+	MODEM="$(find_modem)"
+	[ -n "$MODEM" ] || {
+		rm -f "$READYFILE"
+		remove_aliases
+		exit 0
+	}
+
+	ensure_drivers || {
+		log "ERROR: required USB drivers unavailable"
+		exit 1
+	}
+	ensure_dynamic_id || {
+		log "ERROR: failed to register 05c6:9025 with option"
+		exit 1
+	}
+
+	stable=0
+	n=0
+	while [ "$n" -lt 15 ]; do
+		MODEM="$(find_modem)"
+		[ -n "$MODEM" ] || break
+		unbind_adb "$MODEM"
+		make_aliases >/dev/null 2>&1
+		if ready_state "$MODEM"; then
+			stable=$((stable + 1))
+		else
+			stable=0
+		fi
+		[ "$stable" -ge 3 ] && break
+		sleep 1
+		n=$((n + 1))
+	done
+
+	make_aliases >/dev/null 2>&1
+	if ready_state "$MODEM"; then
+		echo "$(basename "$MODEM")" >"$READYFILE"
+		log "ready: AT=$(readlink -f /dev/t99w175-at) DIAG=$(readlink -f /dev/t99w175-diag 2>/dev/null) NMEA=$(readlink -f /dev/t99w175-nmea 2>/dev/null) QMI=/dev/cdc-wdm0 IF=wwan0"
+		return 0
+	fi
+
+	rm -f "$READYFILE"
+	log "ERROR: T99W175 USB reconciliation incomplete"
+	return 1
+}
+
+main
+exit $?
