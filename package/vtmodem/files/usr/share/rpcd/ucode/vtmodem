@@ -104,6 +104,7 @@ const methods = {
 				iccid: value('AT+CCID', '+CCID:'),
 				imsi: value('AT+CIMI'),
 				attached: value('AT+CGATT?', '+CGATT:'),
+				data_channel: value('AT+XDATACHANNEL=2', '+XDATACHANNEL:'),
 				pdp_contexts: lines('AT+CGDCONT?', '+CGDCONT:'),
 				dns: lines('AT+XDNS?', '+XDNS:')
 			};
