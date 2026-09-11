@@ -38,6 +38,10 @@ if '\tvertell,vt-mt7621d)\n' not in s:
     p.write_text(s)
 PY
 
+# Install our vendor-independent modem package into the OpenWrt package tree.
+rm -rf "$OPENWRT_DIR/package/vtmodem"
+cp -a "$REPO_DIR/package/vtmodem" "$OPENWRT_DIR/package/vtmodem"
+
 cp "$REPO_DIR/config/seed.config" "$OPENWRT_DIR/.config"
 
 cd "$OPENWRT_DIR"
