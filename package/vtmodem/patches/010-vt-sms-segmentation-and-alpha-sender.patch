@@ -1,0 +1,67 @@
+--- vt-sms.c
++++ vt-sms.c
+@@ -503,11 +503,18 @@
+     uint8_t fo = b[p++];
+     if ((fo & 0x03) != 0x00) return -2;
+     if (p + 2 > (size_t)n) return -1;
+-    int digits = b[p++];
++    int address_len = b[p++];
+     uint8_t toa = b[p++];
+-    size_t ab = (size_t)(digits + 1) / 2;
++    size_t ab = (size_t)(address_len + 1) / 2;
+     if (p + ab + 2 + 7 + 1 > (size_t)n) return -1;
+-    if (decode_number(b + p, ab, digits, toa, m->sender, sizeof(m->sender)) < 0) return -1;
++    if ((toa & 0x70) == 0x50) {
++        int septet_count = (address_len * 4) / 7;
++        if (decode_gsm_text(b + p, ab, septet_count, 0, m->sender, sizeof(m->sender)) < 0)
++            return -1;
++    } else {
++        if (decode_number(b + p, ab, address_len, toa, m->sender, sizeof(m->sender)) < 0)
++            return -1;
++    }
+     p += ab;
+     (void)b[p++]; /* PID */
+     uint8_t dcs = b[p++];
+@@ -734,19 +741,35 @@
+     uint8_t pdu[MAX_PDU_BYTES];
+     if(use_gsm) {
+         size_t lim=(gs.n<=160)?160:153;
+-        size_t parts=(gs.n+lim-1)/lim; if(parts==0) parts=1;
+-        size_t off=0;
+-        while(off<gs.n || (gs.n==0 && sent==0)) {
+-            size_t group_left=parts-(size_t)sent;
++        size_t parts=0, probe=0;
++        while(probe<gs.n) {
++            size_t take=gs.n-probe;
++            if(take>lim) take=lim;
++            if(take && probe+take<gs.n && gs.v[probe+take-1]==0x1B)
++                take--;
++            if(!take){rc=2;goto done;}
++            probe+=take;
++            parts++;
++        }
++        if(parts==0) parts=1;
++
++        size_t off=0, global_part=0;
++        while(global_part<parts) {
++            size_t group_left=parts-global_part;
+             int group_total=(int)(group_left>255?255:group_left);
+             uint8_t ref=make_ref();
+             for(int seq=1;seq<=group_total;seq++) {
+-                size_t take=gs.n-off; if(take>lim) take=lim;
++                size_t take=gs.n-off;
++                if(take>lim) take=lim;
++                if(take && off+take<gs.n && gs.v[off+take-1]==0x1B)
++                    take--;
++                if(!take){rc=2;goto done;}
+                 int mp=(parts>1);
+                 size_t pn=build_submit_gsm(phone,gs.v+off,take,mp,ref,group_total,seq,pdu,sizeof(pdu));
+                 if(!pn || send_pdu(fd,pdu,pn,buf)<0){rc=2;goto done;}
+-                off+=take; sent++;
+-                if(gs.n==0) break;
++                off+=take;
++                global_part++;
++                sent++;
+             }
+         }
+     } else {
