@@ -3,6 +3,16 @@
     "title": "VT Modem",
     "order": 80,
     "action": {
+      "type": "firstchild"
+    },
+    "depends": {
+      "acl": [ "luci-app-vtmodem" ]
+    }
+  },
+  "admin/status/vtmodem/status": {
+    "title": "Status",
+    "order": 10,
+    "action": {
       "type": "view",
       "path": "vtmodem/status"
     },
