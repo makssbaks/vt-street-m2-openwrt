@@ -22,6 +22,7 @@ define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
 	$(CP) ./src/vt-at.c $(PKG_BUILD_DIR)/
 	$(CP) ./src/vt-sms.c $(PKG_BUILD_DIR)/
+	patch -d $(PKG_BUILD_DIR) -p0 < ./patches/010-vt-sms-segmentation-and-alpha-sender.patch
 endef
 
 define Build/Compile
