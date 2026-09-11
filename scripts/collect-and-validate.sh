@@ -107,6 +107,19 @@ if [[ -n "$DTB" ]]; then
   fi
 fi
 
+VT_SMS="$(find "$OPENWRT_DIR/build_dir" -type f -name vt-sms -perm -111 -print -quit 2>/dev/null || true)"
+if [[ -n "$VT_SMS" ]]; then
+  cp "$VT_SMS" "$ARTIFACT_DIR/vt-sms.mipsel"
+  {
+    echo
+    echo '===== VT-SMS HELPER ====='
+    file "$ARTIFACT_DIR/vt-sms.mipsel"
+    sha256sum "$ARTIFACT_DIR/vt-sms.mipsel"
+  } | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+else
+  echo 'WARNING: vt-sms helper binary not found for standalone export' | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+fi
+
 {
   echo
   echo '===== RESULT ====='
