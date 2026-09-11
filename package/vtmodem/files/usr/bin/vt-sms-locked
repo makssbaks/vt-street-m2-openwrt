@@ -14,7 +14,7 @@ done
 
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
-/usr/bin/vt-sms "$@"
+/usr/bin/vt-sms.real "$@"
 rc=$?
 
 rmdir "$LOCKDIR" 2>/dev/null
