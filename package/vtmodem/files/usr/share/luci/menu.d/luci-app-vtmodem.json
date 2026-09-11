@@ -19,5 +19,16 @@
     "depends": {
       "acl": [ "luci-app-vtmodem" ]
     }
+  },
+  "admin/status/vtmodem/sms": {
+    "title": "SMS",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "vtmodem/sms"
+    },
+    "depends": {
+      "acl": [ "luci-app-vtmodem" ]
+    }
   }
 }
