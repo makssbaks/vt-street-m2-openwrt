@@ -1,0 +1,60 @@
+name: Extract vt-sms from build 42
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/extract-vt-sms-build42.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools unzip curl file
+
+      - name: Download build 42 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/10285980531/zip" \
+            -o build42.zip
+          unzip -q build42.zip -d build42
+
+      - name: Extract real vt-sms binary
+        run: |
+          set -euo pipefail
+          SYSUPGRADE="$(find build42 -type f -name '*vertell*sysupgrade.bin' -print -quit)"
+          test -n "$SYSUPGRADE"
+          mkdir sysup
+          tar -xf "$SYSUPGRADE" -C sysup
+          ROOT="$(find sysup -type f -name root -print -quit)"
+          test -n "$ROOT"
+          unsquashfs -f -d squashfs-root "$ROOT" usr/bin/vt-sms.real
+          cp squashfs-root/usr/bin/vt-sms.real vt-sms.real
+          chmod 0755 vt-sms.real
+          file vt-sms.real | tee vt-sms-info.txt
+          sha256sum vt-sms.real | tee vt-sms.sha256
+          grep -q 'ELF 32-bit' vt-sms-info.txt
+          grep -qi 'MIPS' vt-sms-info.txt
+
+      - name: Upload standalone helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: vt-sms-build42-real
+          retention-days: 30
+          path: |
+            vt-sms.real
+            vt-sms.sha256
+            vt-sms-info.txt
