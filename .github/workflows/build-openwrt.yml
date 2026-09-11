@@ -7,6 +7,7 @@ on:
     paths:
       - 'port/**'
       - 'config/**'
+      - 'package/**'
       - 'scripts/**'
       - '.github/workflows/build-openwrt.yml'
 
@@ -65,7 +66,7 @@ jobs:
           chmod +x scripts/apply-port.sh scripts/collect-and-validate.sh
           ./scripts/apply-port.sh "$GITHUB_WORKSPACE/openwrt"
           echo '===== SELECTED CONFIG ====='
-          grep -E '^(CONFIG_TARGET_ramips|CONFIG_PACKAGE_(luci|luci-ssl|uqmi|kmod-usb-acm|kmod-usb-net-cdc-ncm|kmod-usb-net-qmi-wwan|kmod-usb-serial-option|kmod-usb3))' openwrt/.config || true
+          grep -E '^(CONFIG_TARGET_ramips|CONFIG_PACKAGE_(luci|luci-ssl|vtmodem|uqmi|kmod-usb-acm|kmod-usb-net-cdc-ncm|kmod-usb-net-qmi-wwan|kmod-usb-serial-option|kmod-usb3))' openwrt/.config || true
 
       - name: Download source packages
         working-directory: openwrt
