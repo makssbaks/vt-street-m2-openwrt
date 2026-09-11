@@ -1,7 +1,5 @@
 define Device/vertell_vt-mt7621d
   $(Device/nand)
-  DEVICE_COMPAT_VERSION := 1.0
-  DEVICE_COMPAT_MESSAGE :=
   DEVICE_VENDOR := Vertell
   DEVICE_MODEL := VT-STREET-M2
   IMAGE_SIZE := 121344k
