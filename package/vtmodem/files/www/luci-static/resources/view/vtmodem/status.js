@@ -62,6 +62,7 @@ return view.extend({
 			table.appendChild(row(_('ICCID'), s.iccid, true));
 			table.appendChild(row(_('IMSI'), s.imsi, true));
 			table.appendChild(row(_('Packet attached'), s.attached, true));
+			table.appendChild(row(_('Data channel'), s.data_channel, true));
 			table.appendChild(row(_('PDP contexts'), s.pdp_contexts, true));
 			table.appendChild(row(_('DNS profiles'), s.dns, true));
 		}
