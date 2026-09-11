@@ -1,0 +1,13 @@
+{
+  "admin/status/vtmodem": {
+    "title": "VT Modem",
+    "order": 80,
+    "action": {
+      "type": "view",
+      "path": "vtmodem/status"
+    },
+    "depends": {
+      "acl": [ "luci-app-vtmodem" ]
+    }
+  }
+}
