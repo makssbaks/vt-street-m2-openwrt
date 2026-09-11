@@ -1,0 +1,10 @@
+{
+  "luci-app-vtmodem": {
+    "description": "Grant access to VT modem status",
+    "read": {
+      "ubus": {
+        "vtmodem": [ "status" ]
+      }
+    }
+  }
+}
