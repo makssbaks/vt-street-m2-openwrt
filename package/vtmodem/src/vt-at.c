@@ -10,7 +10,8 @@
 #include <unistd.h>
 
 #define DEFAULT_DEV "/dev/ttyACM0"
-#define TIMEOUT_MS 1500
+#define DEFAULT_TIMEOUT_MS 1500
+#define MAX_TIMEOUT_MS 120000
 #define BUF_SIZE 8192
 
 static long long now_ms(void)
@@ -64,7 +65,8 @@ static int buffer_has_final(const char *buf, size_t len)
     return 0;
 }
 
-static int transact(int fd, const char *cmd, char *out, size_t outsz)
+static int transact(int fd, const char *cmd, char *out, size_t outsz,
+                    int timeout_ms)
 {
     char tx[512];
     size_t used = 0;
@@ -75,7 +77,7 @@ static int transact(int fd, const char *cmd, char *out, size_t outsz)
     if (write_all(fd, tx, (size_t)n) < 0)
         return -1;
 
-    long long deadline = now_ms() + TIMEOUT_MS;
+    long long deadline = now_ms() + timeout_ms;
 
     while (now_ms() < deadline && used + 1 < outsz) {
         int remain = (int)(deadline - now_ms());
@@ -149,6 +151,13 @@ static int print_payload(const char *buf, const char *cmd)
     return rc;
 }
 
+static void usage(const char *prog)
+{
+    fprintf(stderr,
+            "usage: %s [-t timeout_ms] [device] 'AT+COMMAND'\n",
+            prog);
+}
+
 int main(int argc, char **argv)
 {
     const char *dev = DEFAULT_DEV;
@@ -156,14 +165,35 @@ int main(int argc, char **argv)
     struct termios oldtio, tio;
     char buf[BUF_SIZE];
     int fd, rc;
+    int timeout_ms = DEFAULT_TIMEOUT_MS;
+    int argi = 1;
 
-    if (argc == 2) {
-        cmd = argv[1];
-    } else if (argc == 3) {
-        dev = argv[1];
-        cmd = argv[2];
+    if (argi < argc && !strcmp(argv[argi], "-t")) {
+        char *end = NULL;
+        long v;
+
+        if (argi + 1 >= argc) {
+            usage(argv[0]);
+            return 64;
+        }
+
+        errno = 0;
+        v = strtol(argv[argi + 1], &end, 10);
+        if (errno || !end || *end || v < 100 || v > MAX_TIMEOUT_MS) {
+            fprintf(stderr, "invalid timeout_ms (100-%d)\n", MAX_TIMEOUT_MS);
+            return 64;
+        }
+        timeout_ms = (int)v;
+        argi += 2;
+    }
+
+    if (argc - argi == 1) {
+        cmd = argv[argi];
+    } else if (argc - argi == 2) {
+        dev = argv[argi];
+        cmd = argv[argi + 1];
     } else {
-        fprintf(stderr, "usage: %s [device] 'AT+COMMAND'\n", argv[0]);
+        usage(argv[0]);
         return 64;
     }
 
@@ -204,11 +234,11 @@ int main(int argc, char **argv)
     tcflush(fd, TCIOFLUSH);
 
     memset(buf, 0, sizeof(buf));
-    (void)transact(fd, "ATE0", buf, sizeof(buf));
+    (void)transact(fd, "ATE0", buf, sizeof(buf), DEFAULT_TIMEOUT_MS);
     tcflush(fd, TCIFLUSH);
 
     memset(buf, 0, sizeof(buf));
-    rc = transact(fd, cmd, buf, sizeof(buf));
+    rc = transact(fd, cmd, buf, sizeof(buf), timeout_ms);
 
     (void)tcsetattr(fd, TCSANOW, &oldtio);
     close(fd);
