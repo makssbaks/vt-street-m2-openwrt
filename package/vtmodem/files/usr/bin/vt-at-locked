@@ -1,22 +1,2 @@
 #!/bin/sh
-
-LOCKDIR="/tmp/vtmodem-at.lock"
-tries=0
-
-while ! mkdir "$LOCKDIR" 2>/dev/null; do
-	tries=$((tries + 1))
-	[ "$tries" -ge 30 ] && {
-		echo "vt-at: modem AT lock timeout" >&2
-		exit 75
-	}
-	sleep 1
-done
-
-trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
-
-/usr/bin/vt-at.real "$@"
-rc=$?
-
-rmdir "$LOCKDIR" 2>/dev/null
-trap - EXIT INT TERM
-exit "$rc"
+exec /usr/bin/vt-at.real "$@"
