@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+# Reconcile an already attached T99 after network startup as well as on hotplug.
+# No modem power cycle and no restart of an existing connection.
+START=95
+
+boot()
+{
+	(
+		ACTION=add /etc/hotplug.d/usb/03_t99w175
+	) </dev/null >/dev/null 2>&1 &
+}
