@@ -1,0 +1,68 @@
+--- vt-sms.c
++++ vt-sms.c
+@@ -7,6 +7,7 @@
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <sys/file.h>
+ #include <termios.h>
+ #include <time.h>
+ #include <unistd.h>
+@@ -17,6 +18,20 @@
+ #define MAX_PDU_BYTES 512
+ #define MAX_TEXT_BYTES 16384
+ #define MAX_MESSAGES 512
++#define LOCK_FILE "/tmp/vtmodem-at.lock"
++
++static int acquire_lock(void)
++{
++    int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0600);
++    if (fd < 0)
++        return -1;
++    if (flock(fd, LOCK_EX) < 0) {
++        close(fd);
++        return -1;
++    }
++    return fd;
++}
+ 
+ struct sms_msg {
+     int id;
+@@ -806,10 +821,30 @@
+ int main(int argc,char **argv)
+ {
+-    const char *dev=DEFAULT_DEV; int a=1;
++    const char *dev=DEFAULT_DEV; int a=1,lockfd,rc;
+     if(a<argc && !strcmp(argv[a],"-d")) { if(a+1>=argc){usage(argv[0]);return 64;} dev=argv[a+1]; a+=2; }
+     if(a>=argc){usage(argv[0]);return 64;}
+-    if(!strcmp(argv[a],"list") && a+1==argc) return list_sms(dev);
+-    if(!strcmp(argv[a],"delete") && a+2==argc) { char *e=NULL; long id=strtol(argv[a+1],&e,10); if(!e||*e||id<0||id>65535){json_error("invalid id");return 64;} return delete_sms(dev,(int)id); }
+-    if(!strcmp(argv[a],"send") && a+3==argc) return send_sms(dev,argv[a+1],argv[a+2]);
+-    usage(argv[0]); return 64;
++
++    lockfd=acquire_lock();
++    if(lockfd<0){json_error("modem lock failed");return 75;}
++
++    if(!strcmp(argv[a],"list") && a+1==argc) {
++        rc=list_sms(dev);
++    } else if(!strcmp(argv[a],"delete") && a+2==argc) {
++        char *e=NULL;
++        long id=strtol(argv[a+1],&e,10);
++        if(!e||*e||id<0||id>65535){
++            close(lockfd);
++            json_error("invalid id");
++            return 64;
++        }
++        rc=delete_sms(dev,(int)id);
++    } else if(!strcmp(argv[a],"send") && a+3==argc) {
++        rc=send_sms(dev,argv[a+1],argv[a+2]);
++    } else {
++        close(lockfd);
++        usage(argv[0]);
++        return 64;
++    }
++
++    close(lockfd);
++    return rc;
+ }
