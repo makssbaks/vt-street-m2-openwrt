@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=9
+PKG_RELEASE:=10
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -9,7 +9,7 @@ define Package/vtmodem
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=VT-STREET-M2 modem backend and LuCI interface
-  DEPENDS:=+luci-base +rpcd +qmi-utils +kmod-usb-acm +kmod-usb-net-cdc-ncm +kmod-usb-net-qmi-wwan +kmod-usb-serial-option
+  DEPENDS:=+flock +jsonfilter +luci-base +rpcd +qmi-utils +kmod-usb-acm +kmod-usb-net-cdc-ncm +kmod-usb-net-qmi-wwan +kmod-usb-serial-option
 endef
 
 define Package/vtmodem/description
@@ -43,6 +43,14 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/usb
 	$(INSTALL_BIN) ./files/etc/hotplug.d/usb/03_t99w175 \
 		$(1)/etc/hotplug.d/usb/03_t99w175
+
+	$(INSTALL_DIR) $(1)/usr/libexec
+	$(INSTALL_BIN) ./files/usr/libexec/t99w175-net-ready \
+		$(1)/usr/libexec/t99w175-net-ready
+
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./files/etc/init.d/vtmodem-startup \
+		$(1)/etc/init.d/vtmodem-startup
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/20-vt-mac \

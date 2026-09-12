@@ -1,0 +1,101 @@
+#!/bin/sh
+# Bounded USB -> netifd handoff. No AT/QMI, reset, ifdown or network reload.
+
+TAG="t99w175-net-ready"
+LOCKFILE="/tmp/t99w175-net-ready.lock"
+
+log()
+{
+	logger -t "$TAG" "$*"
+}
+
+device_ready()
+{
+	local usb root qmi tty atpath
+	usb="$(cat /tmp/t99w175-hotplug.ready 2>/dev/null)"
+	case "$usb" in
+		''|*[!0-9.-]*) return 1 ;;
+	esac
+	root="$(readlink -f "/sys/bus/usb/devices/$usb" 2>/dev/null)"
+	[ -n "$root" ] || return 1
+	[ "$(cat "$root/idVendor" 2>/dev/null)" = "05c6" ] || return 1
+	[ "$(cat "$root/idProduct" 2>/dev/null)" = "9025" ] || return 1
+	[ -c /dev/cdc-wdm0 ] && [ -c /dev/t99w175-at ] || return 1
+	[ -e /sys/class/net/wwan0 ] || return 1
+
+	# Do not wake a different modem which happens to use cdc-wdm0/ttyUSB*.
+	qmi="$(readlink -f /sys/class/usbmisc/cdc-wdm0/device 2>/dev/null)"
+	case "$qmi" in "$root":*) ;; *) return 1 ;; esac
+	[ "$(readlink -f /sys/class/net/wwan0/device 2>/dev/null)" = "$qmi" ] || return 1
+	tty="$(basename "$(readlink -f /dev/t99w175-at 2>/dev/null)")"
+	atpath="$(readlink -f "/sys/class/tty/$tty/device" 2>/dev/null)"
+	case "$atpath" in "$root":*) ;; *) return 1 ;; esac
+	return 0
+}
+
+main()
+{
+	local tries=0 status up pending available autostart proto configured
+	exec 9>>"$LOCKFILE" || return 1
+	flock -n 9 || return 0
+
+	# USB events may precede the network ubus object during cold boot.
+	# Sixty attempts, two-second spacing; each ubus request is also bounded.
+	while [ "$tries" -lt 60 ]; do
+		tries=$((tries + 1))
+		device_ready || return 0
+		configured="$(uci -q get network.modem.proto)"
+		[ "$configured" = "t99w175qmi" ] || return 0
+		case "$(uci -q get network.modem.auto)" in
+			0|false|no|off) return 0 ;;
+		esac
+		case "$(uci -q get network.modem.disabled)" in
+			1|true|yes|on) return 0 ;;
+		esac
+
+		status="$(ubus -t 3 call network.interface.modem status 2>/dev/null)" || {
+			sleep 2
+			continue
+		}
+		proto="$(jsonfilter -s "$status" -e '@.proto' 2>/dev/null)"
+		[ "$proto" = "t99w175qmi" ] || return 0
+		up="$(jsonfilter -s "$status" -e '@.up' 2>/dev/null)"
+		pending="$(jsonfilter -s "$status" -e '@.pending' 2>/dev/null)"
+		available="$(jsonfilter -s "$status" -e '@.available' 2>/dev/null)"
+		autostart="$(jsonfilter -s "$status" -e '@.autostart' 2>/dev/null)"
+
+		# Respect both UCI auto=0 and an explicit runtime disconnect.
+		[ "$up" = true ] || [ "$pending" = true ] && return 0
+		[ "$autostart" = false ] && return 0
+		if [ "$up" != false ] || [ "$pending" != false ] || [ "$autostart" != true ]; then
+			sleep 2
+			continue
+		fi
+
+		case "$available" in
+			false)
+				# Same notification as proto_set_available modem 1. Netifd
+				# starts an auto-enabled interface on false -> true itself.
+				if ubus -t 3 call network.interface notify_proto \
+					'{"interface":"modem","action":5,"available":true}' >/dev/null 2>&1; then
+					log "USB ready; modem availability restored in netifd"
+					return 0
+				fi
+				;;
+			true)
+				# Unlike /sbin/ifup this does not reload configuration.
+				# Netifd's up method is a no-op for UP/SETUP states.
+				if ubus -t 3 call network.interface.modem up '{}' >/dev/null 2>&1; then
+					log "USB ready; requested startup of idle modem interface"
+					return 0
+				fi
+				;;
+		esac
+		sleep 2
+	done
+
+	log "netifd handoff timed out; no interface restart or USB reset performed"
+	return 1
+}
+
+main "$@"

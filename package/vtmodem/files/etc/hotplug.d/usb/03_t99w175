@@ -129,7 +129,7 @@ ready_state()
 
 ensure_network_config()
 {
-	changed=0
+	local network_changed=0 firewall_changed=0 wan_idx nets
 
 	if ! uci -q get network.modem >/dev/null 2>&1; then
 		uci -q set network.modem='interface'
@@ -138,7 +138,7 @@ ensure_network_config()
 		uci -q set network.modem.pdptype='ip'
 		uci -q set network.modem.apn='internet'
 		uci -q commit network
-		changed=1
+		network_changed=1
 		log "created default network.modem (T99W175 QMI, APN internet, IPv4)"
 	fi
 
@@ -151,20 +151,23 @@ ensure_network_config()
 			*)
 				uci -q add_list "firewall.@zone[$wan_idx].network=modem"
 				uci -q commit firewall
-				changed=1
+				firewall_changed=1
 				log "added modem to firewall wan zone"
 				;;
 		esac
 	fi
 
-	if [ "$changed" -eq 1 ]; then
-		ubus call network reload >/dev/null 2>&1 || true
-		/etc/init.d/firewall reload >/dev/null 2>&1 || true
-		(
-			sleep 2
-			ifup modem >/dev/null 2>&1 || true
-		) &
+	if [ "$network_changed" -eq 1 ]; then
+		ubus -t 3 call network reload >/dev/null 2>&1 || true
 	fi
+	if [ "$firewall_changed" -eq 1 ]; then
+		/etc/init.d/firewall reload >/dev/null 2>&1 || true
+	fi
+
+	# Run on every ready event, including unchanged configuration and
+	# subsequent boots. The helper serializes itself and respects UP,
+	# PENDING, auto=0 and a manual disconnect. It never invokes ifup.
+	/usr/libexec/t99w175-net-ready </dev/null >/dev/null 2>&1 &
 }
 
 main()
@@ -176,13 +179,15 @@ main()
 		exit 0
 	fi
 
+	# Serialize configuration creation even on the already-ready path.
+	mkdir "$LOCKDIR" 2>/dev/null || exit 0
+	trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+	trap 'exit 1' INT TERM
+
 	if [ -f "$READYFILE" ] && ready_state "$MODEM"; then
 		ensure_network_config
 		exit 0
 	fi
-
-	mkdir "$LOCKDIR" 2>/dev/null || exit 0
-	trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
 	MODEM="$(find_modem)"
 	[ -n "$MODEM" ] || {
