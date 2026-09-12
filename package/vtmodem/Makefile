@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=8
+PKG_RELEASE:=9
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -23,6 +23,7 @@ define Build/Prepare
 	$(CP) ./src/vt-at.c $(PKG_BUILD_DIR)/
 	$(CP) ./src/vt-sms.c $(PKG_BUILD_DIR)/
 	patch -d $(PKG_BUILD_DIR) -p0 < ./patches/010-vt-sms-segmentation-and-alpha-sender.patch
+	patch -d $(PKG_BUILD_DIR) -p0 < ./patches/020-vt-sms-shared-flock.patch
 endef
 
 define Build/Compile
