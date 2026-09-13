@@ -49,6 +49,11 @@ function lines(dev, cmd, prefix) {
 	return result;
 }
 
+function telemetry_number(value) {
+	return (type(value) == 'int' || type(value) == 'double') &&
+		value >= -1.7976931348623157e308 && value <= 1.7976931348623157e308;
+}
+
 function qmi_fields(value, names) {
 	if (value == null)
 		return null;
@@ -58,42 +63,107 @@ function qmi_fields(value, names) {
 	let result = {};
 	for (let name in names) {
 		let v = value[name];
-		if (v != null && type(v) != 'int' && type(v) != 'double')
+		if (v != null && !telemetry_number(v))
 			return false;
 		result[name] = v ?? null;
 	}
 	return result;
 }
 
+function t99_carriers(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'array' || length(value) > 32)
+		return false;
+	let carriers = [];
+	for (let entry in value) {
+		if (type(entry) != 'object' || type(entry.role) != 'string' ||
+			!match(entry.role, /^(pcc|scc[1-9][0-9]*)$/))
+			return false;
+		let carrier = qmi_fields(entry, [ 'band', 'bandwidth_mhz' ]);
+		if (carrier === false)
+			return false;
+		carrier.role = entry.role;
+		push(carriers, carrier);
+	}
+	return carriers;
+}
+
+function t99_cells(value) {
+	if (value == null)
+		return null;
+	let radio = qmi_fields(value, [ 'cell_id', 'tac', 'tx_power_dbm' ]);
+	if (radio === false || type(value.cells) != 'array' || length(value.cells) > 32)
+		return false;
+	radio.cells = [];
+	for (let entry in value.cells) {
+		if (type(entry) != 'object' || (entry.role != 'primary' && entry.role != 'secondary'))
+			return false;
+		let cell = qmi_fields(entry, [ 'band', 'bandwidth_mhz', 'earfcn', 'pci',
+			'rsrp_dbm', 'rsrq_db', 'rssi_dbm', 'snr_db' ]);
+		if (cell === false)
+			return false;
+		cell.role = entry.role;
+		push(radio.cells, cell);
+	}
+	radio.antenna_rsrp_dbm = null;
+	if (value.antenna_rsrp_dbm != null) {
+		if (type(value.antenna_rsrp_dbm) != 'array' || length(value.antenna_rsrp_dbm) > 16)
+			return false;
+		radio.antenna_rsrp_dbm = [];
+		for (let antenna in value.antenna_rsrp_dbm) {
+			if (antenna != null && !telemetry_number(antenna))
+				return false;
+			push(radio.antenna_rsrp_dbm, antenna);
+		}
+	}
+	return radio;
+}
+
+function decode_t99_status(out) {
+	let result = {
+		qmi_signal: null, qmi_radio: null, t99_temperature: null,
+		t99_ca: null, t99_radio: null
+	};
+	if (type(out) != 'string' || !length(out) || length(out) > 8192)
+		return result;
+
+	try {
+		let parsed = json(out);
+		if (type(parsed) != 'object')
+			return result;
+		let signal = qmi_fields(parsed.qmi_signal, [ 'rssi_dbm', 'rsrp_dbm', 'rsrq_db', 'snr_db' ]);
+		let radio = qmi_fields(parsed.qmi_radio, [ 'band', 'earfcn', 'bandwidth_mhz' ]);
+		let temperature = qmi_fields(parsed.t99_temperature, [ 'tsens_c', 'pa_c', 'skin_c' ]);
+		let carriers = t99_carriers(parsed.t99_ca);
+		let cells = t99_cells(parsed.t99_radio);
+		// Each optional source is independent: malformed CA must not hide
+		// valid signal measurements or temperatures returned in this reply.
+		result.qmi_signal = signal === false ? null : signal;
+		result.qmi_radio = radio === false ? null : radio;
+		result.t99_temperature = temperature === false ? null : temperature;
+		result.t99_ca = carriers === false ? null : carriers;
+		result.t99_radio = cells === false ? null : cells;
+	}
+	catch (e) {
+		return result;
+	}
+	return result;
+}
+
 function t99_qmi_status(device) {
-	let unavailable = { qmi_signal: null, qmi_radio: null };
 	if (device != '/dev/cdc-wdm0')
-		return unavailable;
+		return decode_t99_status('');
 
 	// The standalone helper owns its timed children. Calling system() here
 	// would let an unrelated rpcd child's SIGCHLD bypass its query timeout.
 	let fd = popen('/usr/bin/ucode /usr/share/vtmodem/qmi-status.uc 2>/dev/null');
 	if (!fd)
-		return unavailable;
+		return decode_t99_status('');
 
 	let out = fd.read('all') ?? '';
 	let rc = fd.close();
-	if (rc != 0 || !length(out) || length(out) > 8192)
-		return unavailable;
-
-	try {
-		let parsed = json(out);
-		if (type(parsed) != 'object')
-			return unavailable;
-		let signal = qmi_fields(parsed.qmi_signal, [ 'rssi_dbm', 'rsrp_dbm', 'rsrq_db', 'snr_db' ]);
-		let radio = qmi_fields(parsed.qmi_radio, [ 'band', 'earfcn', 'bandwidth_mhz' ]);
-		if (signal === false || radio === false)
-			return unavailable;
-		return { qmi_signal: signal, qmi_radio: radio };
-	}
-	catch (e) {
-		return unavailable;
-	}
+	return decode_t99_status(rc == 0 ? out : '');
 }
 
 function find_usb(vid_expected, pid_expected) {
@@ -234,6 +304,9 @@ const methods = {
 				let qmi = t99_qmi_status(m.control_device);
 				s.qmi_signal = qmi.qmi_signal;
 				s.qmi_radio = qmi.qmi_radio;
+				s.t99_temperature = qmi.t99_temperature;
+				s.t99_ca = qmi.t99_ca;
+				s.t99_radio = qmi.t99_radio;
 			}
 
 			return s;

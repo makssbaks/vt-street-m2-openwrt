@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -66,6 +66,7 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/usr/share/vtmodem
 	$(INSTALL_DATA) ./files/usr/share/vtmodem/qmi.uc $(1)/usr/share/vtmodem/qmi.uc
 	$(INSTALL_DATA) ./files/usr/share/vtmodem/qmi-status.uc $(1)/usr/share/vtmodem/qmi-status.uc
+	$(INSTALL_DATA) ./files/usr/share/vtmodem/t99-radio.uc $(1)/usr/share/vtmodem/t99-radio.uc
 
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/luci-app-vtmodem.json \

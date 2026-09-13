@@ -82,8 +82,57 @@ function rsrp(v) {
 
 function measurement(v, unit, fallback) {
 	if (typeof v === 'number' && isFinite(v))
-		return String(v) + (unit ? ' ' + unit : '');
+		return String(Number(v.toFixed(1))) + (unit ? ' ' + unit : '');
 	return fallback === undefined ? '-' : fallback;
+}
+
+function bandName(v) {
+	var band = measurement(v);
+	return band === '-' ? '-' : 'B' + band;
+}
+
+function carrierCombination(carriers) {
+	if (!Array.isArray(carriers) || !carriers.length)
+		return '-';
+	return carriers.map(function(carrier) {
+		return bandName(carrier.band) + ' / ' + measurement(carrier.bandwidth_mhz, 'MHz');
+	}).join(' + ');
+}
+
+function antennaSignal(values) {
+	if (!Array.isArray(values) || !values.length)
+		return '-';
+	return values.map(function(value, index) {
+		return 'RX' + (index + 1) + ': ' + measurement(value, 'dBm');
+	}).join('; ');
+}
+
+function carrierTable(cells) {
+	if (!Array.isArray(cells) || !cells.length)
+		return E('p', {}, [ _('Carrier measurements unavailable') ]);
+
+	var labels = [ _('Carrier'), _('Band'), _('Bandwidth'), _('EARFCN'), _('PCI'),
+		_('RSRP'), _('RSRQ'), _('RSSI'), _('SNR') ];
+	var secondary = 0;
+	var rows = cells.map(function(cell) {
+		var role = cell.role === 'primary' ? _('Primary')
+			: cell.role === 'secondary' ? _('Secondary') + ' ' + (++secondary) : '-';
+		var values = [ role, bandName(cell.band), measurement(cell.bandwidth_mhz, 'MHz'),
+			measurement(cell.earfcn), measurement(cell.pci), measurement(cell.rsrp_dbm, 'dBm'),
+			measurement(cell.rsrq_db, 'dB'), measurement(cell.rssi_dbm, 'dBm'),
+			measurement(cell.snr_db, 'dB') ];
+		return E('tr', { 'class': 'tr' }, values.map(function(value, index) {
+			return E('td', { 'class': 'td', 'data-title': labels[index] }, [ value ]);
+		}));
+	});
+
+	return E('div', { 'style': 'overflow-x:auto' }, [
+		E('table', { 'class': 'table', 'style': 'white-space:nowrap' }, [
+			E('tr', { 'class': 'tr table-titles' }, labels.map(function(label) {
+				return E('th', { 'class': 'th', 'scope': 'col' }, [ label ]);
+			}))
+		].concat(rows))
+	]);
 }
 
 function temperature(v) {
@@ -162,6 +211,8 @@ return view.extend({
 		var isT99 = s.type === 't99w175';
 		var qmiSignal = isT99 && s.qmi_signal || {};
 		var qmiRadio = isT99 && s.qmi_radio || {};
+		var t99Temperature = isT99 && s.t99_temperature || {};
+		var t99Radio = isT99 && s.t99_radio || {};
 		var signalCards = [
 			card(_('RSSI'), measurement(qmiSignal.rssi_dbm, 'dBm', rssi(s.csq))),
 			card(_('RSRP'), measurement(qmiSignal.rsrp_dbm, 'dBm', rsrp(s.cesq))),
@@ -169,7 +220,11 @@ return view.extend({
 		];
 		if (isT99)
 			signalCards.push(card(_('SNR'), measurement(qmiSignal.snr_db, 'dB')));
-		signalCards.push(card(_('Temperature'), temperature(s.temperature)));
+		signalCards.push(isT99
+			? card(_('Temperature'), measurement(t99Temperature.tsens_c, '°C'),
+				'TSENS; PA: ' + measurement(t99Temperature.pa_c, '°C') + '; '
+				+ _('Skin') + ': ' + measurement(t99Temperature.skin_c, '°C'))
+			: card(_('Temperature'), temperature(s.temperature)));
 		var signal = grid(signalCards);
 
 		var radioRows = [
@@ -177,17 +232,25 @@ return view.extend({
 			row(_('Raw CEREG'), s.registration, true)
 		];
 		if (isT99) {
-			var band = measurement(qmiRadio.band);
 			radioRows.push(
-				row(_('LTE band'), band === '-' ? '-' : 'B' + band),
+				row(_('LTE band'), bandName(qmiRadio.band)),
 				row(_('EARFCN'), measurement(qmiRadio.earfcn)),
-				row(_('Channel bandwidth'), measurement(qmiRadio.bandwidth_mhz, 'MHz'))
+				row(_('Channel bandwidth'), measurement(qmiRadio.bandwidth_mhz, 'MHz')),
+				row(_('LTE CA state'), carrierCombination(s.t99_ca)),
+				row(_('Cell ID'), measurement(t99Radio.cell_id)),
+				row(_('TAC'), measurement(t99Radio.tac)),
+				row(_('Transmit power'), measurement(t99Radio.tx_power_dbm, 'dBm')),
+				row(_('Antenna RSRP'), antennaSignal(t99Radio.antenna_rsrp_dbm))
+			);
+		}
+		else {
+			radioRows.push(
+				row(_('Extended signal'), s.xcesq, true),
+				row(_('Cell measurement'), s.cell_measurement, true),
+				row(_('LTE CA state'), s.ca_state, true)
 			);
 		}
 		radioRows.push(
-			row(_('Extended signal'), s.xcesq, true),
-			row(_('Cell measurement'), s.cell_measurement, true),
-			row(_('LTE CA state'), s.ca_state, true),
 			row(_('Packet attached'), s.attached, true),
 			row(_('Data channel'), s.data_channel, true)
 		);
@@ -225,7 +288,8 @@ return view.extend({
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Radio / cell') ]),
-				radio
+				radio,
+				isT99 ? carrierTable(t99Radio.cells) : ''
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Modem details') ]),

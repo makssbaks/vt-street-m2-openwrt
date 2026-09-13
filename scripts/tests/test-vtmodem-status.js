@@ -37,6 +37,20 @@ function values(root, title) {
 		[ text(node.children[0]), text(node.children[1]) ]));
 }
 
+function signalNote(root, label) {
+	const card = section(root, 'Signal').children.find(node => text(node.children[0]) === label);
+	return text(card.children[2]);
+}
+
+function carrierRows(root) {
+	const radioSection = root.children.find(node => node && node.attrs &&
+		node.attrs.class === 'cbi-section' && text(node.children[0]) === 'Radio / cell');
+	const carriers = radioSection.children[2];
+	if (!carriers || carriers.tag !== 'div')
+		return [];
+	return carriers.children[0].children.slice(1).map(row => row.children.map(text));
+}
+
 function render(overrides) {
 	return page.render(Object.assign({
 		present: true,
@@ -58,6 +72,64 @@ assert.equal(radio['LTE band'], 'B3');
 assert.equal(radio.EARFCN, '1275');
 assert.equal(radio['Channel bandwidth'], '15 MHz');
 assert.equal(radio['LTE CA state'], '-');
+assert.deepEqual(carrierRows(measured), []);
+
+const carriers = render({
+	qmi_signal: { rssi_dbm: -72, rsrp_dbm: -107, rsrq_db: -17, snr_db: 4.4000000000000004 },
+	t99_temperature: { tsens_c: 29, pa_c: 30, skin_c: 28 },
+	t99_ca: [
+		{ role: 'pcc', band: 3, bandwidth_mhz: 15 },
+		{ role: 'scc1', band: 1, bandwidth_mhz: 10 }
+	],
+	t99_radio: {
+		cell_id: 118667785, tac: 1446, tx_power_dbm: 12,
+		antenna_rsrp_dbm: [ -106.6, -110.8, null, null ],
+		cells: [
+			{ role: 'primary', band: 3, bandwidth_mhz: 15, earfcn: 1275, pci: 213,
+				rsrp_dbm: -106.7, rsrq_db: -16.5, rssi_dbm: -69.9, snr_db: 2.4 },
+			{ role: 'secondary', band: 1, bandwidth_mhz: 10, earfcn: 550, pci: 224,
+				rsrp_dbm: -111.6, rsrq_db: -17.3, rssi_dbm: -75.2, snr_db: 12.4 }
+		]
+	}
+});
+assert.equal(values(carriers, 'Signal').SNR, '4.4 dB');
+assert.equal(values(carriers, 'Signal').RSRP, '-107 dBm');
+assert.equal(values(carriers, 'Signal').Temperature, '29 °C');
+assert.equal(signalNote(carriers, 'Temperature'), 'TSENS; PA: 30 °C; Skin: 28 °C');
+assert.equal(values(carriers, 'Radio / cell')['LTE CA state'], 'B3 / 15 MHz + B1 / 10 MHz');
+assert.equal(values(carriers, 'Radio / cell')['Cell ID'], '118667785');
+assert.equal(values(carriers, 'Radio / cell').TAC, '1446');
+assert.equal(values(carriers, 'Radio / cell')['Transmit power'], '12 dBm');
+assert.equal(values(carriers, 'Radio / cell')['Antenna RSRP'],
+	'RX1: -106.6 dBm; RX2: -110.8 dBm; RX3: -; RX4: -');
+assert.deepEqual(carrierRows(carriers), [
+	[ 'Primary', 'B3', '15 MHz', '1275', '213', '-106.7 dBm', '-16.5 dB', '-69.9 dBm', '2.4 dB' ],
+	[ 'Secondary 1', 'B1', '10 MHz', '550', '224', '-111.6 dBm', '-17.3 dB', '-75.2 dBm', '12.4 dB' ]
+]);
+
+const partialCarriers = render({
+	temperature: '42',
+	t99_temperature: { tsens_c: null, pa_c: 0, skin_c: 28.5 },
+	t99_ca: null,
+	t99_radio: { tx_power_dbm: 0, cells: [
+		{ role: 'primary', band: 3, bandwidth_mhz: 1.4, earfcn: 0, pci: 0,
+			rsrp_dbm: null, rsrq_db: 0, rssi_dbm: NaN, snr_db: Infinity }
+	] }
+});
+assert.equal(values(partialCarriers, 'Signal').Temperature, '-');
+assert.equal(signalNote(partialCarriers, 'Temperature'), 'TSENS; PA: 0 °C; Skin: 28.5 °C');
+assert.equal(values(partialCarriers, 'Radio / cell')['LTE CA state'], '-');
+assert.equal(values(partialCarriers, 'Radio / cell')['Cell ID'], '-');
+assert.equal(values(partialCarriers, 'Radio / cell')['Transmit power'], '0 dBm');
+assert.deepEqual(carrierRows(partialCarriers), [
+	[ 'Primary', 'B3', '1.4 MHz', '0', '0', '-', '0 dB', '-', '-' ]
+]);
+
+const unavailable = render({ t99_temperature: null, t99_ca: null, t99_radio: null });
+assert.equal(values(unavailable, 'Signal').Temperature, '-');
+assert.equal(values(unavailable, 'Radio / cell')['LTE CA state'], '-');
+assert.deepEqual(carrierRows(unavailable), []);
+assert.match(text(unavailable), /Carrier measurements unavailable/);
 
 const partial = render({
 	qmi_signal: { rssi_dbm: -70.5, rsrp_dbm: null, rsrq_db: 0, snr_db: 0 },
@@ -90,7 +162,10 @@ const l860 = render({
 	temperature: '42.3',
 	ca_state: 'existing AT result',
 	qmi_signal: { rssi_dbm: -1, rsrp_dbm: -2, rsrq_db: -3, snr_db: 4 },
-	qmi_radio: { band: 3, earfcn: 1275, bandwidth_mhz: 15 }
+	qmi_radio: { band: 3, earfcn: 1275, bandwidth_mhz: 15 },
+	t99_temperature: { tsens_c: 29, pa_c: 30, skin_c: 28 },
+	t99_ca: [ { role: 'pcc', band: 3, bandwidth_mhz: 15 } ],
+	t99_radio: { cells: [ { role: 'primary', band: 3, bandwidth_mhz: 15 } ] }
 });
 assert.deepEqual(values(l860, 'Signal'), {
 	RSSI: '-83 dBm', RSRP: '-80 dBm', RSRQ: '-9.5 dB', Temperature: '42 °C'
@@ -99,5 +174,7 @@ assert.equal(values(l860, 'Radio / cell')['LTE CA state'], 'existing AT result')
 assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'LTE band'), false);
 assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'EARFCN'), false);
 assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'Channel bandwidth'), false);
+assert.deepEqual(carrierRows(l860), []);
+assert.equal(signalNote(l860, 'Temperature'), '');
 
-console.log('VT Modem status fixtures passed: numeric QMI, partial fallback, unavailable data, L860.');
+console.log('VT Modem status fixtures passed: QMI rounding, T99 temperatures and carriers, partial data, L860.');

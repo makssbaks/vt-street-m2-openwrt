@@ -9,13 +9,20 @@ root = Path(__file__).resolve().parents[1]
 files = [
     'package/vtmodem/files/usr/share/vtmodem/qmi.uc',
     'package/vtmodem/files/usr/share/vtmodem/qmi-status.uc',
+    'package/vtmodem/files/usr/share/vtmodem/t99-radio.uc',
     'package/vtmodem/files/usr/share/rpcd/ucode/vtmodem',
     'package/vtmodem/files/www/luci-static/resources/view/vtmodem/status.js',
     'scripts/install-t99-telemetry.sh',
     'scripts/tests/test-t99-qmi.uc',
     'scripts/tests/test-t99-qmi-supervisor.uc',
+    'scripts/tests/test-t99-radio.uc',
+    'scripts/tests/test-t99-at-status.uc',
+    'scripts/tests/test-t99-rpc.uc',
     'scripts/tests/fixtures/t99-signal.txt',
     'scripts/tests/fixtures/t99-radio.txt',
+    'scripts/tests/fixtures/t99-temp.txt',
+    'scripts/tests/fixtures/t99-ca.txt',
+    'scripts/tests/fixtures/t99-debug.txt',
 ]
 output = Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'vt-t99-telemetry.zip'
 contents = {name: (root / name).read_bytes() for name in files}
