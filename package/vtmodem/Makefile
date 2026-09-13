@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=15
+PKG_RELEASE:=16
 
 include $(INCLUDE_DIR)/package.mk
 
