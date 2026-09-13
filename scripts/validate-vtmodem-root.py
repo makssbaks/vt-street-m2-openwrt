@@ -47,7 +47,7 @@ def validate(root, sources):
             raise ValueError(f'{installed}: executable permission is missing')
         report.append(f'{hashlib.sha256(data).hexdigest()}  /{installed}')
 
-    for relative in ['usr/bin/vt-at.real', 'usr/bin/vt-sms.real']:
+    for relative in ['usr/bin/vt-at.real', 'usr/bin/vt-sms.real', 'usr/bin/vt-traffic-db', 'usr/sbin/vnstatd']:
         target = regular_file(root, relative)
         data = target.read_bytes()
         if (len(data) < 52 or data[:7] != b'\x7fELF\x01\x01\x01'
@@ -55,6 +55,8 @@ def validate(root, sources):
             raise ValueError(f'{relative}: expected a 32-bit little-endian MIPS ELF helper')
         if not target.stat().st_mode & 0o111:
             raise ValueError(f'{relative}: executable permission is missing')
+        if relative == 'usr/sbin/vnstatd' and b'VT_VNSTAT_FLUSH_EXIT_V1' not in data:
+            raise ValueError('usr/sbin/vnstatd: final-save acknowledgement patch is missing')
         report.append(f'{hashlib.sha256(data).hexdigest()}  /{relative}')
     return report
 

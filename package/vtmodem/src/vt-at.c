@@ -14,7 +14,9 @@
 #define DEFAULT_TIMEOUT_MS 1500
 #define MAX_TIMEOUT_MS 120000
 #define BUF_SIZE 8192
+#ifndef LOCK_FILE
 #define LOCK_FILE "/tmp/vtmodem-at.lock"
+#endif
 
 static long long now_ms(void)
 {
@@ -23,106 +25,90 @@ static long long now_ms(void)
     return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
 }
 
-static int acquire_lock(void)
+/* All I/O, including lock contention, shares the caller's monotonic deadline. */
+static int acquire_lock(long long deadline)
 {
-    int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0600);
-    if (fd < 0)
-        return -1;
-    if (flock(fd, LOCK_EX) < 0) {
-        close(fd);
-        return -1;
+    int fd = open(LOCK_FILE, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    for (;;) {
+        if (now_ms() >= deadline) { errno = ETIMEDOUT; break; }
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0) return fd;
+        if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR) break;
+        long long remain = deadline - now_ms();
+        if (remain > 0) poll(NULL, 0, remain > 20 ? 20 : (int)remain);
     }
-    return fd;
+    int saved = errno;
+    close(fd);
+    errno = saved;
+    return -1;
 }
 
-static int write_all(int fd, const char *buf, size_t len)
+static int write_all(int fd, const char *buf, size_t len, long long deadline)
 {
     while (len) {
+        long long remain = deadline - now_ms();
+        if (remain <= 0) { errno = ETIMEDOUT; return -1; }
+        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+        int pr = poll(&pfd, 1, (int)remain);
+        if (pr < 0 && errno == EINTR) continue;
+        if (pr <= 0) { if (!pr) errno = ETIMEDOUT; return -1; }
+        if (!(pfd.revents & POLLOUT)) { errno = EIO; return -1; }
         ssize_t n = write(fd, buf, len);
-        if (n < 0) {
-            if (errno == EINTR || errno == EAGAIN)
-                continue;
-            return -1;
-        }
+        if (n < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+        if (n <= 0) { if (!n) errno = EIO; return -1; }
         buf += n;
         len -= (size_t)n;
     }
     return 0;
 }
 
-static int line_is_final(const char *line)
+/* Ignore unterminated lines: even an incomplete "OK" is not confirmation. */
+static int buffer_final(const char *buf, size_t len)
 {
-    return !strcmp(line, "OK") || !strcmp(line, "ERROR") ||
-           !strncmp(line, "+CME ERROR:", 11) ||
-           !strncmp(line, "+CMS ERROR:", 11);
-}
-
-static int buffer_has_final(const char *buf, size_t len)
-{
-    char line[512];
-    size_t lp = 0;
-
-    for (size_t i = 0; i <= len; i++) {
-        int sep = (i == len || buf[i] == '\r' || buf[i] == '\n');
-        if (!sep) {
-            if (lp + 1 < sizeof(line))
-                line[lp++] = buf[i];
-            continue;
-        }
-        if (lp) {
-            line[lp] = 0;
-            if (line_is_final(line))
-                return 1;
-            lp = 0;
-        }
+    size_t start = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] != '\r' && buf[i] != '\n') continue;
+        size_t n = i - start;
+        const char *line = buf + start;
+        if (n == 2 && !memcmp(line, "OK", 2)) return 1;
+        if ((n == 5 && !memcmp(line, "ERROR", 5)) ||
+            (n >= 11 && (!memcmp(line, "+CME ERROR:", 11) ||
+                         !memcmp(line, "+CMS ERROR:", 11)))) return 2;
+        start = i + 1;
     }
     return 0;
 }
 
 static int transact(int fd, const char *cmd, char *out, size_t outsz,
-                    int timeout_ms)
+                    long long deadline)
 {
     char tx[512];
     size_t used = 0;
+    out[0] = 0;
     int n = snprintf(tx, sizeof(tx), "%s\r", cmd);
-    if (n <= 0 || (size_t)n >= sizeof(tx))
-        return -1;
+    if (n <= 0 || (size_t)n >= sizeof(tx)) { errno = EINVAL; return 1; }
+    if (write_all(fd, tx, (size_t)n, deadline) < 0)
+        return errno == ETIMEDOUT ? 3 : 1;
 
-    if (write_all(fd, tx, (size_t)n) < 0)
-        return -1;
-
-    long long deadline = now_ms() + timeout_ms;
-
-    while (now_ms() < deadline && used + 1 < outsz) {
-        int remain = (int)(deadline - now_ms());
-        if (remain < 1)
-            remain = 1;
-
+    while (used + 1 < outsz) {
+        long long remain = deadline - now_ms();
+        if (remain <= 0) return 3;
         struct pollfd pfd = { .fd = fd, .events = POLLIN };
-        int pr = poll(&pfd, 1, remain);
-        if (pr < 0) {
-            if (errno == EINTR)
-                continue;
-            return -1;
-        }
-        if (pr == 0)
-            break;
-
-        if (pfd.revents & POLLIN) {
-            ssize_t r = read(fd, out + used, outsz - used - 1);
-            if (r > 0) {
-                used += (size_t)r;
-                out[used] = 0;
-                if (buffer_has_final(out, used))
-                    return 0;
-            } else if (r < 0 && errno != EAGAIN && errno != EINTR) {
-                return -1;
-            }
-        }
+        int pr = poll(&pfd, 1, (int)remain);
+        if (pr < 0 && errno == EINTR) continue;
+        if (pr < 0) return 1;
+        if (!pr) return 3;
+        if (!(pfd.revents & POLLIN)) { errno = EIO; return 1; }
+        ssize_t r = read(fd, out + used, outsz - used - 1);
+        if (r < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+        if (r <= 0) { errno = EIO; return 1; }
+        used += (size_t)r;
+        out[used] = 0;
+        int final = buffer_final(out, used);
+        if (final) return final == 1 ? 0 : 2;
     }
-
-    out[used] = 0;
-    return used ? 0 : 1;
+    errno = EMSGSIZE;
+    return 4;
 }
 
 static int print_payload(const char *buf, const char *cmd)
@@ -211,15 +197,17 @@ int main(int argc, char **argv)
         return 64;
     }
 
-    if (strncmp(cmd, "AT", 2)) {
+    if (strncmp(cmd, "AT", 2) || strpbrk(cmd, "\r\n")) {
         fprintf(stderr, "command must begin with AT\n");
         return 64;
     }
 
-    lockfd = acquire_lock();
+    long long deadline = now_ms() + timeout_ms;
+    lockfd = acquire_lock(deadline);
     if (lockfd < 0) {
+        int timed_out = errno == ETIMEDOUT;
         perror("modem lock");
-        return 1;
+        return timed_out ? 3 : 1;
     }
 
     fd = open(dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -256,25 +244,17 @@ int main(int argc, char **argv)
 
     tcflush(fd, TCIOFLUSH);
 
+    /* Echo is filtered below; avoid a separate configuration transaction. */
     memset(buf, 0, sizeof(buf));
-    (void)transact(fd, "ATE0", buf, sizeof(buf), DEFAULT_TIMEOUT_MS);
-    tcflush(fd, TCIFLUSH);
-
-    memset(buf, 0, sizeof(buf));
-    rc = transact(fd, cmd, buf, sizeof(buf), timeout_ms);
+    rc = transact(fd, cmd, buf, sizeof(buf), deadline);
 
     (void)tcsetattr(fd, TCSANOW, &oldtio);
     close(fd);
     close(lockfd);
 
-    if (rc < 0) {
-        perror("AT transaction");
-        return 1;
-    }
-    if (rc > 0) {
-        fprintf(stderr, "AT timeout: %s\n", cmd);
-        return 3;
-    }
-
-    return print_payload(buf, cmd);
+    if (rc == 1) perror("AT transaction");
+    else if (rc == 3) fprintf(stderr, "AT timeout without final result: %s\n", cmd);
+    else if (rc == 4) fprintf(stderr, "AT response too large: %s\n", cmd);
+    else (void)print_payload(buf, cmd);
+    return rc;
 }

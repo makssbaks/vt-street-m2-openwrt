@@ -45,5 +45,5 @@ let acl = json(readfile('package/vtmodem/files/usr/share/rpcd/acl.d/luci-app-vtm
 assert(index(acl.read.ubus.vtmodem, 'radio_status') >= 0, 'Read permission includes status');
 assert(index(acl.read.ubus.vtmodem, 'radio_apply') < 0, 'Read permission cannot write radio');
 assert(index(acl.write.ubus.vtmodem, 'radio_apply') >= 0, 'Write permission explicitly controls radio apply');
-assert(index(acl.read.ubus.vtmodem, 'sms_list') >= 0 && index(acl.write.ubus.vtmodem, 'sms_send') >= 0, 'SMS permissions preserved');
+assert(index(acl.read.ubus.vtmodem, 'sms_list_start') >= 0 && index(acl.read.ubus.vtmodem, 'sms_job_status') >= 0 && index(acl.write.ubus.vtmodem, 'sms_send_start') >= 0 && index(acl.write.ubus.vtmodem, 'sms_delete_start') >= 0, 'Async SMS list/poll reads and send/delete writes remain separately authorized');
 print('T99_CONTROL_RPC_TESTS_OK\n');

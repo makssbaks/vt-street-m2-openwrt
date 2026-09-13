@@ -14,10 +14,10 @@ HELPER = ROOT / 'package/vtmodem/files/usr/libexec/t99w175-net-ready'
 HOTPLUG = ROOT / 'package/vtmodem/files/etc/hotplug.d/usb/03_t99w175'
 INIT = ROOT / 'package/vtmodem/files/etc/init.d/vtmodem-startup'
 SOURCE = HELPER.read_text()
-assert SOURCE.endswith('main "$@"\n')
-LIBRARY = SOURCE.removesuffix('main "$@"\n')
+LIBRARY = SOURCE
 
 HARNESS = r'''
+INCLUDE_ONLY=1
 . "$SOURCE"
 LOCKFILE="$WORK/lock"
 log() { printf 'log %s\n' "$*" >>"$WORK/trace"; }
@@ -80,7 +80,7 @@ DEFAULTS = {
 }
 # name, mock overrides, expected result, notify count, up count, status count
 CASES = [
-    ('available idle interface', {}, 0, 0, 1, 1),
+    ('available idle interface: netifd owns retry', {}, 0, 0, 0, 1),
     ('restore NO_DEVICE availability', {'AVAILABLE': 'false'}, 0, 1, 0, 1),
     ('already connected', {'UP': 'true'}, 0, 0, 0, 1),
     ('connection pending', {'PENDING': 'true'}, 0, 0, 0, 1),
@@ -91,13 +91,13 @@ CASES = [
     ('different configured modem', {'CONFIG_PROTO': 'ncm'}, 0, 0, 0, 0),
     ('different running protocol', {'PROTO': 'ncm'}, 0, 0, 0, 1),
     ('USB absent/not ready', {'DEVICE': '0'}, 0, 0, 0, 0),
-    ('late netifd object', {'STATUS_FAILURES': '3'}, 0, 0, 1, 4),
+    ('late netifd object', {'STATUS_FAILURES': '3'}, 0, 0, 0, 4),
     ('netifd absent: bounded stop', {'STATUS_FAILURES': '999'}, 1, 0, 0, 60),
     ('missing autostart: fail closed', {'AUTOSTART': ''}, 1, 0, 0, 60),
     ('missing pending: fail closed', {'PENDING': ''}, 1, 0, 0, 60),
     ('missing availability: fail closed', {'AVAILABLE': ''}, 1, 0, 0, 60),
     ('notify failure: no forced up', {'AVAILABLE': 'false', 'NOTIFY_RC': '1'}, 1, 60, 0, 60),
-    ('up failure: bounded retries', {'UP_RC': '1'}, 1, 0, 60, 60),
+    ('never force up even after stale autostart read', {'UP_RC': '1'}, 0, 0, 0, 1),
 ]
 
 def check_shell(shell: list[str]) -> int:
@@ -152,10 +152,12 @@ def main() -> None:
     total = sum(check_shell(shell) for shell in shells)
     makefile = (ROOT / 'package/vtmodem/Makefile').read_text()
     assert '+flock ' in makefile and '+jsonfilter ' in makefile
-    assert '$(1)/usr/libexec/t99w175-net-ready' in makefile
-    assert '$(1)/etc/init.d/vtmodem-startup' in makefile
+    assert ('$(1)/usr/libexec/t99w175-net-ready' in makefile or
+            '$(INSTALL_BIN) ./files/usr/libexec/* $(1)/usr/libexec/' in makefile)
+    assert ('$(1)/etc/init.d/vtmodem-startup' in makefile or
+            '$(INSTALL_BIN) ./files/etc/init.d/* $(1)/etc/init.d/' in makefile)
     hotplug = HOTPLUG.read_text()
-    assert '/usr/libexec/t99w175-net-ready </dev/null >/dev/null 2>&1 &' in hotplug
+    assert '/usr/libexec/t99w175-net-ready 8>&- </dev/null >/dev/null 2>&1 &' in hotplug
     assert 'ifup modem' not in hotplug
     # The helper itself has no command path to reset or query the modem.
     for token in ('qmicli ', 'vt-at ', 'ifup ', 'ifdown ', 'power_usb/value'):

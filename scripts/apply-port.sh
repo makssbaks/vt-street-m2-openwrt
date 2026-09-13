@@ -9,14 +9,16 @@ if [[ ! -f "$OPENWRT_DIR/include/toplevel.mk" ]]; then
   exit 1
 fi
 
+# Keep upstream feed commits immutable. The one additive package patch is
+# separately verified against tracked port source and recorded in the image.
+python3 "$REPO_DIR/scripts/build-identity.py" --install-feed-patches "$OPENWRT_DIR"
+
 cp "$REPO_DIR/port/mt7621_vertell_vt-mt7621d.dts" \
   "$OPENWRT_DIR/target/linux/ramips/dts/mt7621_vertell_vt-mt7621d.dts"
 
 PROFILE_FILE="$OPENWRT_DIR/target/linux/ramips/image/mt7621.mk"
-if ! grep -q '^define Device/vertell_vt-mt7621d$' "$PROFILE_FILE"; then
-  printf '\n' >> "$PROFILE_FILE"
-  cat "$REPO_DIR/port/vertell-profile.mk" >> "$PROFILE_FILE"
-fi
+python3 "$REPO_DIR/scripts/apply-device-profile.py" "$PROFILE_FILE" \
+  "$REPO_DIR/port/vertell-profile.mk"
 
 NETWORK_FILE="$OPENWRT_DIR/target/linux/ramips/mt7621/base-files/etc/board.d/02_network"
 python3 - "$NETWORK_FILE" <<'PY'
@@ -68,6 +70,7 @@ rm -rf "$OPENWRT_DIR/package/vtmodem"
 cp -a "$REPO_DIR/package/vtmodem" "$OPENWRT_DIR/package/vtmodem"
 
 cp "$REPO_DIR/config/seed.config" "$OPENWRT_DIR/.config"
+python3 "$REPO_DIR/scripts/build-identity.py" "$OPENWRT_DIR"
 
 cd "$OPENWRT_DIR"
 make defconfig
