@@ -10,7 +10,7 @@ function shellquote(s) {
 // ucode system() timeouts can be interrupted by unrelated child exits.
 // exec keeps the timeout attached to this query, never to qmi-proxy.
 // The unlinked temporary file disappears when closed, including on failure.
-export function run_command(argv, timeout_ms) {
+function run_command(argv, timeout_ms) {
 	let fd = mkstemp();
 	if (!fd)
 		return { ok: false, exit_code: null, output: '' };
@@ -34,7 +34,7 @@ export function run_command(argv, timeout_ms) {
 	return { ok: rc === 0, exit_code: rc, output: out };
 }
 
-export function parse_signal(out) {
+function parse_signal(out) {
 	let s = { rssi_dbm: null, rsrp_dbm: null, rsrq_db: null, snr_db: null };
 	let lte = false;
 	for (let line in split(out, '\n')) {
@@ -62,7 +62,7 @@ export function parse_signal(out) {
 	return s;
 }
 
-export function parse_radio(out) {
+function parse_radio(out) {
 	let groups = { basic: {}, extended: {}, bandwidth: {} };
 	let section = '';
 	let lte = false;
@@ -101,7 +101,7 @@ export function parse_radio(out) {
 	};
 }
 
-export function t99_qmi_status(device) {
+function t99_qmi_status(device) {
 	let result = { qmi_signal: null, qmi_radio: null };
 	if (device != '/dev/cdc-wdm0')
 		return result;
@@ -116,3 +116,6 @@ export function t99_qmi_status(device) {
 
 	return result;
 }
+
+// Keep exports separate for the ucode version pinned by OpenWrt 25.12.
+export { run_command, parse_signal, parse_radio, t99_qmi_status };
