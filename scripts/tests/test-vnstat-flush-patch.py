@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PATCH = ROOT / 'port/patches/vnstat2/910-vt-flush-exit-status.patch'
 FIXTURE = ROOT / 'scripts/tests/fixtures/vnstat-2.13-vnstatd.c'
 SOURCE_SHA256 = '67aaca70427fe168141a80e600b9ff3ac4a75575e6e3fbffc1fd2aafda9a559f'
+DBSQL_FIXTURE = ROOT / 'scripts/tests/fixtures/vnstat-2.13-dbsql.c'
+DBSQL_SHA256 = '4a0b69350d115a206b42f51e4b1fd664a9dbe813b7ae93b0462837c7f7594cf7'
 SOURCE_ARCHIVE_SHA256 = 'c9fe19312d1ec3ddfbc4672aa951cf9e61ca98dc14cad3d3565f7d9803a6b187'
 
 spec = importlib.util.spec_from_file_location('identity', ROOT / 'scripts/build-identity.py')
@@ -33,6 +35,9 @@ class FlushPatchTests(unittest.TestCase):
         original = FIXTURE.read_bytes()
         assert hashlib.sha256(original).hexdigest() == SOURCE_SHA256
         (cls.work / 'src/vnstatd.c').write_bytes(original)
+        dbsql = DBSQL_FIXTURE.read_bytes()
+        assert hashlib.sha256(dbsql).hexdigest() == DBSQL_SHA256
+        (cls.work / 'src/dbsql.c').write_bytes(dbsql)
         result = subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(PATCH)],
                                 cwd=cls.work, capture_output=True, text=True)
         assert result.returncode == 0, result.stdout + result.stderr

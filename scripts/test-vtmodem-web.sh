@@ -81,6 +81,7 @@ fi
 if [[ -n "${VT_SQLITE_SO:-}" ]]; then
   VT_PACKAGE_ARGS+=(--sqlite-so "$VT_SQLITE_SO")
 fi
+timeout --kill-after=5s 30s python3 scripts/tests/test-vnstat-db-errors.py "${VT_SQLITE_ARGS[@]}"
 timeout --kill-after=5s 30s python3 scripts/tests/test-vt-traffic-db.py "${VT_SQLITE_ARGS[@]}"
 timeout --kill-after=5s 60s python3 scripts/tests/test-vtmodem-package.py "${VT_PACKAGE_ARGS[@]}"
 

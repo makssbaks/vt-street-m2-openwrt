@@ -46,7 +46,10 @@ The tracked-source cleanliness gate is unchanged.
 
 Upstream vnstatd 2.13 returns success after a nonfatal final SQLite save error.
 The patch makes its shutdown exit status reflect both final flush and database
-close failure. The traffic supervisor requires the read-only
+close failure. It also propagates SQLite step and finalize errors from the two
+interface lookups used during the private daemon's final save. A failed query
+cannot be mistaken for an absent interface, and cannot create a replacement
+interface after the lookup fails. The traffic supervisor requires the read-only
 `--vt-flush-exit-status` capability marker before relying on this exit status;
 an unpatched daemon cannot acknowledge a successful save. The probe returns
 before configuration or database access. Normal traffic and modem sessions are
@@ -97,6 +100,7 @@ Local regression commands:
 python3 scripts/tests/test-vt-image.py
 python3 scripts/tests/test-vt-mac.py
 python3 scripts/tests/test-vnstat-flush-patch.py
+python3 scripts/tests/test-vnstat-db-errors.py
 bash -n scripts/apply-port.sh scripts/collect-and-validate.sh
 ```
 
@@ -113,3 +117,13 @@ the actual patched shutdown/capability statements with database fault stubs.
 It covers successful save, busy/locked/I/O/full-disk errors, close failure, and
 preservation of the save error even if later cleanup clears the global error.
 This is a host unit test, not a claim of a newly compiled or installed MIPS image.
+
+The database error tests apply the same patch to exact upstream
+[`v2.13/src/dbsql.c`](https://github.com/vergoh/vnstat/blob/v2.13/src/dbsql.c)
+(SHA256 `4a0b69350d115a206b42f51e4b1fd664a9dbe813b7ae93b0462837c7f7594cf7`)
+and use upstream `daemon.c` for the save path. They compile the actual lookup
+and flush functions against host SQLite with injected step and finalize errors.
+The tests verify that failed lookups are reported, that a missing row remains a
+valid create case, and that a failed flush keeps unsaved data for a later retry.
+This coverage concerns the dedicated daemon's `--noremove` save path; it does
+not assert that every upstream vnStat database operation has been audited.
