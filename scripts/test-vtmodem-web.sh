@@ -62,6 +62,7 @@ for VT_TEST in \
   scripts/tests/test-vtmodem-c.py \
   scripts/tests/test-vtmodem-root.py \
   scripts/tests/test-vt-image.py \
+  scripts/tests/test-build-workflow.py \
   scripts/tests/test-vt-mac.py \
   scripts/tests/test-vnstat-flush-patch.py \
   scripts/tests/test-vt-traffic-service.py; do

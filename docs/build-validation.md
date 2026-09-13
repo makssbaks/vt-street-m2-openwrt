@@ -21,6 +21,12 @@ into the image overlay with the port commit, OpenWrt commit, exact feed commits,
 VT Modem package version and (in CI) the build run number. Tracked port changes
 must be committed before producing this release identity.
 
+The workflow invokes the apply/collect scripts through Bash without changing
+tracked file permissions. Build 50 stopped before compilation because its
+`chmod +x` changed the tracked `apply-port.sh` mode from 100644 to 100755 and
+correctly tripped this cleanliness gate. The regression test executes the actual
+workflow blocks in committed temporary repositories and keeps the gate intact.
+
 ## Reproducible feed selection
 
 The main OpenWrt source stays at

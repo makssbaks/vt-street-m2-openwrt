@@ -49,6 +49,7 @@ jobs:
         run: |
           python3 scripts/tests/test-vt-image.py
           python3 scripts/tests/test-vt-mac.py
+          python3 scripts/tests/test-build-workflow.py
 
       - name: Fetch pinned OpenWrt 25.12 source
         run: |
@@ -76,8 +77,7 @@ jobs:
 
       - name: Apply VT-STREET-M2 board port
         run: |
-          chmod +x scripts/apply-port.sh scripts/collect-and-validate.sh
-          ./scripts/apply-port.sh "$GITHUB_WORKSPACE/openwrt"
+          bash scripts/apply-port.sh "$GITHUB_WORKSPACE/openwrt"
           echo '===== SELECTED CONFIG ====='
           grep -E '^(CONFIG_TARGET_ramips|CONFIG_PACKAGE_(luci|luci-ssl|vtmodem|uqmi|kmod-usb-acm|kmod-usb-net-cdc-ncm|kmod-usb-net-qmi-wwan|kmod-usb-serial-option|kmod-usb3))' openwrt/.config || true
 
@@ -110,7 +110,7 @@ jobs:
 
       - name: Collect and validate firmware
         run: |
-          ./scripts/collect-and-validate.sh "$GITHUB_WORKSPACE/openwrt" "$GITHUB_WORKSPACE/artifacts"
+          bash scripts/collect-and-validate.sh "$GITHUB_WORKSPACE/openwrt" "$GITHUB_WORKSPACE/artifacts"
           echo '===== VALIDATION ====='
           cat artifacts/VALIDATION.txt
 
