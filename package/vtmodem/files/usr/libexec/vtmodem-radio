@@ -1,0 +1,10 @@
+#!/bin/sh
+# A separate configuration lock covers the complete read/check/write sequence.
+# vt-at.real owns its own AT-port lock; do not acquire that lock here.
+umask 077
+exec 9>/tmp/vtmodem-radio.lock || exit 1
+if ! flock -n 9; then
+	printf '%s\n' '{"ok":false,"supported":true,"changed":false,"verified":false,"error":"Radio settings are busy. Wait and read the settings again."}'
+	exit 0
+fi
+exec /usr/bin/ucode /usr/share/vtmodem/control-worker.uc "$@"

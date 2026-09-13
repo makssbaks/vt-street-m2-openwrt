@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=16
+PKG_RELEASE:=17
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -45,6 +45,7 @@ define Package/vtmodem/install
 		$(1)/etc/hotplug.d/usb/03_t99w175
 
 	$(INSTALL_DIR) $(1)/usr/libexec
+	$(INSTALL_BIN) ./files/usr/libexec/vtmodem-radio $(1)/usr/libexec/vtmodem-radio
 	$(INSTALL_BIN) ./files/usr/libexec/t99w175-net-ready \
 		$(1)/usr/libexec/t99w175-net-ready
 
@@ -64,6 +65,8 @@ define Package/vtmodem/install
 	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/vtmodem $(1)/usr/share/rpcd/ucode/vtmodem
 
 	$(INSTALL_DIR) $(1)/usr/share/vtmodem
+	$(INSTALL_DATA) ./files/usr/share/vtmodem/t99-control.uc $(1)/usr/share/vtmodem/t99-control.uc
+	$(INSTALL_DATA) ./files/usr/share/vtmodem/control-worker.uc $(1)/usr/share/vtmodem/control-worker.uc
 	$(INSTALL_DATA) ./files/usr/share/vtmodem/qmi.uc $(1)/usr/share/vtmodem/qmi.uc
 	$(INSTALL_DATA) ./files/usr/share/vtmodem/qmi-status.uc $(1)/usr/share/vtmodem/qmi-status.uc
 	$(INSTALL_DATA) ./files/usr/share/vtmodem/t99-radio.uc $(1)/usr/share/vtmodem/t99-radio.uc
@@ -82,6 +85,7 @@ define Package/vtmodem/install
 		$(1)/www/luci-static/resources/protocol/t99w175qmi.js
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/vtmodem
+	$(INSTALL_DATA) ./files/www/luci-static/resources/view/vtmodem/radio.js $(1)/www/luci-static/resources/view/vtmodem/radio.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/vtmodem/status.js \
 		$(1)/www/luci-static/resources/view/vtmodem/status.js
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/vtmodem/sms.js \
