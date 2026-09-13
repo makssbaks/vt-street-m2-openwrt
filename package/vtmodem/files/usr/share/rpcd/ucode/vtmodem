@@ -120,10 +120,65 @@ function t99_cells(value) {
 	return radio;
 }
 
+function t99_sim_id(value) {
+	if (value == null)
+		return null;
+	return type(value) == 'string' && match(value, /^[0-9]{19,20}$/) ? value : false;
+}
+
+function t99_session_info(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object' || type(value.up) != 'bool' ||
+		(value.pending != null && type(value.pending) != 'bool') ||
+		(value.available != null && type(value.available) != 'bool') ||
+		(value.interface != null && value.interface != 'wwan0') ||
+		(value.up && value.interface != 'wwan0') ||
+		type(value.ipv4) != 'array' || length(value.ipv4) > 32 ||
+		type(value.dns) != 'array' || length(value.dns) > 16)
+		return false;
+	let session = {
+		up: value.up, pending: value.pending ?? null,
+		available: value.available ?? null, interface: value.interface ?? null,
+		ipv4: [], dns: []
+	};
+	// The isolated session parser checks complete IP address semantics.
+	// This boundary checks type, shape and bounds without importing it into rpcd.
+	for (let entry in value.ipv4) {
+		if (type(entry) != 'object' || type(entry.address) != 'string' ||
+			length(entry.address) > 15 || !match(entry.address, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) ||
+			!telemetry_number(entry.mask) || entry.mask < 0 || entry.mask > 32 || int(entry.mask) != entry.mask)
+			return false;
+		push(session.ipv4, { address: entry.address, mask: int(entry.mask) });
+	}
+	for (let address in value.dns) {
+		if (type(address) != 'string' || !length(address) || length(address) > 45 ||
+			!match(address, /^[0-9a-fA-F:.]+$/) || (index(address, '.') < 0 && index(address, ':') < 0))
+			return false;
+		push(session.dns, address);
+	}
+	if (!session.up) {
+		session.ipv4 = [];
+		session.dns = [];
+	}
+	return session;
+}
+
+function t99_link_info(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object' || (value.raw_ip != null && type(value.raw_ip) != 'bool') ||
+		(value.mac != null && (type(value.mac) != 'string' ||
+			!match(value.mac, /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/))))
+		return false;
+	return { raw_ip: value.raw_ip ?? null, mac: value.raw_ip === true ? null : (value.mac ?? null) };
+}
+
 function decode_t99_status(out) {
 	let result = {
 		qmi_signal: null, qmi_radio: null, t99_temperature: null,
-		t99_ca: null, t99_radio: null
+		t99_ca: null, t99_radio: null, t99_iccid: null,
+		t99_session: null, t99_link: null
 	};
 	if (type(out) != 'string' || !length(out) || length(out) > 8192)
 		return result;
@@ -137,6 +192,9 @@ function decode_t99_status(out) {
 		let temperature = qmi_fields(parsed.t99_temperature, [ 'tsens_c', 'pa_c', 'skin_c' ]);
 		let carriers = t99_carriers(parsed.t99_ca);
 		let cells = t99_cells(parsed.t99_radio);
+		let iccid = t99_sim_id(parsed.t99_iccid);
+		let session = t99_session_info(parsed.t99_session);
+		let link = t99_link_info(parsed.t99_link);
 		// Each optional source is independent: malformed CA must not hide
 		// valid signal measurements or temperatures returned in this reply.
 		result.qmi_signal = signal === false ? null : signal;
@@ -144,6 +202,9 @@ function decode_t99_status(out) {
 		result.t99_temperature = temperature === false ? null : temperature;
 		result.t99_ca = carriers === false ? null : carriers;
 		result.t99_radio = cells === false ? null : cells;
+		result.t99_iccid = iccid === false ? null : iccid;
+		result.t99_session = session === false ? null : session;
+		result.t99_link = link === false ? null : link;
 	}
 	catch (e) {
 		return result;
@@ -235,7 +296,7 @@ function common_status(m) {
 		imei: value(dev, 'AT+CGSN'),
 		cfun: value(dev, 'AT+CFUN?', '+CFUN:'),
 		sim_state: value(dev, 'AT+CPIN?', '+CPIN:'),
-		iccid: value(dev, 'AT+CCID', '+CCID:'),
+		iccid: m.type == 't99w175' ? '' : value(dev, 'AT+CCID', '+CCID:'),
 		imsi: value(dev, 'AT+CIMI'),
 		operator: value(dev, 'AT+COPS?', '+COPS:'),
 		registration: value(dev, 'AT+CEREG?', '+CEREG:'),
@@ -307,6 +368,9 @@ const methods = {
 				s.t99_temperature = qmi.t99_temperature;
 				s.t99_ca = qmi.t99_ca;
 				s.t99_radio = qmi.t99_radio;
+				s.iccid = qmi.t99_iccid ?? '';
+				s.t99_session = qmi.t99_session;
+				s.t99_link = qmi.t99_link;
 			}
 
 			return s;

@@ -12,7 +12,7 @@ command -v ucode >/dev/null
 src=package/vtmodem/files
 rpc=usr/share/rpcd/ucode/vtmodem
 ui=www/luci-static/resources/view/vtmodem/status.js
-files="usr/share/vtmodem/qmi.uc usr/share/vtmodem/t99-radio.uc usr/share/vtmodem/qmi-status.uc $rpc $ui"
+files="usr/share/vtmodem/qmi.uc usr/share/vtmodem/t99-radio.uc usr/share/vtmodem/t99-session.uc usr/share/vtmodem/qmi-status.uc $rpc $ui"
 
 hash_of() {
 	sha256sum "$1" | cut -d ' ' -f 1
@@ -31,23 +31,30 @@ check_base() {
 	exit 1
 }
 
-# Accept stock build 49, the verified r2 hotfix, or this exact bundle.
+# Accept stock build 49, the verified r2/r3 hotfixes, or this exact bundle.
 check_base "$rpc" \
 	1240a0ba09cbaa073efddbadd60a49cbeb6a4a17559d5668aa5be48f792685f8 \
-	31db24e3e3afcdefc56a8798e39d6176a2afd6e9e449b1b0281b69c339cae9b8
+	31db24e3e3afcdefc56a8798e39d6176a2afd6e9e449b1b0281b69c339cae9b8 \
+	cb6ff9a9ce2cfb9379d44c988fb4929f543823e19a2ea93b1226c9883842d5e1
 check_base "$ui" \
 	6d1ed0f7c3b397c28d0ad09e8ad004e136cf7585ec4c917f06f13b2e0ac0b0f6 \
-	1b493dbbb3648f741da2398b88db4889ef1f8664875c08c4701f9eafafd6a346
+	1b493dbbb3648f741da2398b88db4889ef1f8664875c08c4701f9eafafd6a346 \
+	133b0c822ce1449201d4740ad432b708cc5ed00ca82cc0e122068757f516d9e8
 if [ -e /usr/share/vtmodem/qmi.uc ]; then
 	check_base usr/share/vtmodem/qmi.uc \
 		91dd9fdc6575ba80c4030ff6d85bdf92ce6cf44824dd142aa015b183fd4aabe7
 fi
 if [ -e /usr/share/vtmodem/qmi-status.uc ]; then
 	check_base usr/share/vtmodem/qmi-status.uc \
-		9727c70ddf1512ad6fdf3606a1efb01c7221e8daeef9d226c0c0f94c87fd0d6c
+		9727c70ddf1512ad6fdf3606a1efb01c7221e8daeef9d226c0c0f94c87fd0d6c \
+		b5f9275b891a6ba8ace09dc2839da699c047dbbe44dbec1d8939ac1d6ce49692
 fi
 if [ -e /usr/share/vtmodem/t99-radio.uc ]; then
-	check_base usr/share/vtmodem/t99-radio.uc
+	check_base usr/share/vtmodem/t99-radio.uc \
+		4bdfdce01982848c38cbcab24f4b26c2b0a5818d02a9a28e67f832926fcec992
+fi
+if [ -e /usr/share/vtmodem/t99-session.uc ]; then
+	check_base usr/share/vtmodem/t99-session.uc
 fi
 
 # Validate on the router's own interpreter, before changing installed files.
@@ -56,6 +63,7 @@ ucode scripts/tests/test-t99-qmi-supervisor.uc
 ucode scripts/tests/test-t99-radio.uc
 ucode scripts/tests/test-t99-at-status.uc
 ucode scripts/tests/test-t99-rpc.uc
+ucode scripts/tests/test-t99-session.uc
 ucode -c -o /dev/null "$src/usr/share/vtmodem/qmi-status.uc"
 ucode -c -o /dev/null "$src/$rpc"
 

@@ -113,16 +113,29 @@ function parse_cells(out) {
 	return result;
 }
 
+function parse_iccid(out) {
+	for (let line in split(out ?? '', '\n')) {
+		let m = match(trim(line), /^ICCID:[ \t]*([0-9]{19}[Ff]?|[0-9]{20})$/);
+		if (!m)
+			continue;
+		// EFICCID uses BCD with F padding (ETSI TS 102 221 section 13.2).
+		// This modem prints the padding nibble after a 19-digit identifier.
+		return replace(m[1], /[Ff]$/, '');
+	}
+	return null;
+}
+
 // The caller supplies the bounded runner from the isolated status process.
 // Only verified read queries and the two supported AT device paths are used.
 function t99_at_status(device, run) {
-	let result = { t99_temperature: null, t99_ca: null, t99_radio: null };
+	let result = { t99_temperature: null, t99_ca: null, t99_radio: null, t99_iccid: null };
 	if (device != '/dev/t99w175-at' && device != '/dev/ttyUSB2')
 		return result;
 	let queries = [
 		[ 't99_temperature', 'AT^TEMP?', parse_temperature ],
 		[ 't99_ca', 'AT^CA_INFO?', parse_ca ],
-		[ 't99_radio', 'AT^DEBUG?', parse_cells ]
+		[ 't99_radio', 'AT^DEBUG?', parse_cells ],
+		[ 't99_iccid', 'AT+ICCID', parse_iccid ]
 	];
 	for (let query in queries) {
 		try {
@@ -138,4 +151,4 @@ function t99_at_status(device, run) {
 }
 
 // Separate exports are required by the OpenWrt build 49 ucode compiler.
-export { parse_temperature, parse_ca, parse_cells, t99_at_status };
+export { parse_temperature, parse_ca, parse_cells, parse_iccid, t99_at_status };

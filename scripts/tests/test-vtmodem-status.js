@@ -155,6 +155,78 @@ for (const missing of [ {}, { qmi_signal: null, qmi_radio: null }, {
 	assert.equal(values(fallback, 'Radio / cell')['Channel bandwidth'], '-');
 }
 
+const connectedSession = {
+	up: true, pending: false, available: true, interface: 'wwan0',
+	ipv4: [ { address: '10.169.86.163', mask: 29 } ], dns: [ '85.249.22.248' ]
+};
+const connected = render({
+	attached: '0', data_channel: 'old AT value', dns: [ 'stale DNS profile' ],
+	iccid: '8901234567890123456',
+	t99_session: connectedSession,
+	t99_link: { raw_ip: true, mac: null }
+});
+assert.equal(values(connected, 'Overview').Data, 'Connected');
+assert.equal(values(connected, 'Radio / cell')['Data channel'], 'Connected (QMI / wwan0)');
+assert.equal(values(connected, 'Radio / cell')['IPv4 address'], '10.169.86.163/29');
+assert.equal(values(connected, 'Modem details')['DNS servers'], '85.249.22.248');
+assert.equal(values(connected, 'Modem details')['Data MAC'], 'Not applicable (Raw IP)');
+assert.equal(values(connected, 'Modem details').ICCID, '8901234567890123456');
+assert.equal(Object.hasOwn(values(connected, 'Modem details'), 'DNS profiles'), false);
+assert.doesNotMatch(text(connected), /stale DNS profile|old AT value/);
+
+for (const [ state, expected ] of [
+	[ { up: false, pending: false, available: true }, 'Disconnected' ],
+	[ { up: false, pending: true, available: true }, 'Connecting' ],
+	[ { up: false, pending: true, available: false }, 'Unavailable' ],
+	[ { up: false, pending: null, available: null }, 'Disconnected' ],
+	[ null, 'Unknown' ],
+	[ {}, 'Unknown' ],
+	[ { up: 'true', pending: 'true', available: 'false' }, 'Unknown' ]
+]) {
+	const statePage = render({ attached: '1', data_channel: '1,AT channel', t99_session: state });
+	assert.equal(values(statePage, 'Overview').Data, expected);
+	assert.equal(values(statePage, 'Radio / cell')['Data channel'], expected);
+}
+
+for (const malformed of [ null, false, 42, 'invalid', [], [ connectedSession ], {
+	up: null, pending: null, available: null, interface: { name: 'wwan0' },
+	ipv4: [ null, false, 'bad', [], { address: '10.0.0.1', mask: '24' },
+		{ address: '999.0.0.1', mask: 24 }, { address: '10.0.0.1', mask: 33 },
+		{ address: '10.0.0.1', mask: 1.5 }, { address: 'bad', mask: 24 } ],
+	dns: [ null, false, {}, [], '' ]
+} ]) {
+	const malformedPage = render({
+		attached: '1', data_interface: 'wwan0', dns: [ 'stale DNS profile' ],
+		data_mac: '00:11:22:33:44:55', t99_session: malformed, t99_link: malformed
+	});
+	assert.equal(values(malformedPage, 'Overview').Data, 'Unknown');
+	assert.equal(values(malformedPage, 'Radio / cell')['Data channel'], 'Unknown');
+	assert.equal(values(malformedPage, 'Radio / cell')['IPv4 address'], '-');
+	assert.equal(values(malformedPage, 'Modem details')['DNS servers'], '-');
+	assert.equal(values(malformedPage, 'Modem details')['Data MAC'], '-');
+	assert.doesNotMatch(text(malformedPage), /\[object Object\]|stale DNS profile|Packet attachedwwan0/);
+}
+
+for (const [ link, expected ] of [
+	[ { raw_ip: false, mac: '02:85:2f:d9:04:8e' }, '02:85:2f:d9:04:8e' ],
+	[ { raw_ip: null, mac: '02:85:2F:D9:04:8E' }, '02:85:2F:D9:04:8E' ],
+	[ { raw_ip: true, mac: '02:85:2f:d9:04:8e' }, 'Not applicable (Raw IP)' ],
+	[ { raw_ip: 'true', mac: null }, '-' ],
+	[ { raw_ip: false, mac: 'invalid' }, '-' ],
+	[ { raw_ip: false, mac: [] }, '-' ],
+	[ { raw_ip: false, mac: null }, '-' ]
+]) {
+	assert.equal(values(render({ t99_link: link }), 'Modem details')['Data MAC'], expected);
+}
+
+const partialSession = render({ t99_session: {
+	up: true, interface: 'invalid interface',
+	ipv4: [ { address: '0.0.0.0', mask: 0 } ], dns: [ '2001:db8::53', null, '85.249.22.248' ]
+} });
+assert.equal(values(partialSession, 'Radio / cell')['Data channel'], 'Connected (QMI)');
+assert.equal(values(partialSession, 'Radio / cell')['IPv4 address'], '0.0.0.0/0');
+assert.equal(values(partialSession, 'Modem details')['DNS servers'], '2001:db8::5385.249.22.248');
+
 const l860 = render({
 	type: 'fibocom-l860',
 	csq: '15,99',
@@ -165,7 +237,11 @@ const l860 = render({
 	qmi_radio: { band: 3, earfcn: 1275, bandwidth_mhz: 15 },
 	t99_temperature: { tsens_c: 29, pa_c: 30, skin_c: 28 },
 	t99_ca: [ { role: 'pcc', band: 3, bandwidth_mhz: 15 } ],
-	t99_radio: { cells: [ { role: 'primary', band: 3, bandwidth_mhz: 15 } ] }
+	t99_radio: { cells: [ { role: 'primary', band: 3, bandwidth_mhz: 15 } ] },
+	attached: '1', data_channel: '1,existing AT channel', data_interface: 'wwan1',
+	data_mac: '00:11:22:33:44:55', dns: [ 'existing DNS profile' ],
+	t99_session: { up: false, pending: true, available: false, dns: [ 'wrong DNS' ] },
+	t99_link: { raw_ip: true, mac: null }
 });
 assert.deepEqual(values(l860, 'Signal'), {
 	RSSI: '-83 dBm', RSRP: '-80 dBm', RSRQ: '-9.5 dB', Temperature: '42 °C'
@@ -176,5 +252,11 @@ assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'EARFCN'), false);
 assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'Channel bandwidth'), false);
 assert.deepEqual(carrierRows(l860), []);
 assert.equal(signalNote(l860, 'Temperature'), '');
+assert.equal(values(l860, 'Overview').Data, 'Data channel ready');
+assert.equal(values(l860, 'Radio / cell')['Data channel'], '1,existing AT channel');
+assert.equal(Object.hasOwn(values(l860, 'Radio / cell'), 'IPv4 address'), false);
+assert.equal(values(l860, 'Modem details')['Data MAC'], '00:11:22:33:44:55');
+assert.equal(values(l860, 'Modem details')['DNS profiles'], 'existing DNS profile');
+assert.equal(Object.hasOwn(values(l860, 'Modem details'), 'DNS servers'), false);
 
-console.log('VT Modem status fixtures passed: QMI rounding, T99 temperatures and carriers, partial data, L860.');
+console.log('VT Modem status fixtures passed: QMI rounding, T99 radio/session/link details, partial and malformed data, L860.');

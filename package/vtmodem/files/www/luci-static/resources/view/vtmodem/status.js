@@ -149,6 +149,56 @@ function dataState(s) {
 	return _('Disconnected');
 }
 
+function record(v) {
+	return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
+function sessionState(session) {
+	if (session.up === true)
+		return _('Connected');
+	if (session.available === false)
+		return _('Unavailable');
+	if (session.pending === true)
+		return _('Connecting');
+	if (session.up === false)
+		return _('Disconnected');
+	return _('Unknown');
+}
+
+function sessionInterface(session) {
+	return typeof session.interface === 'string' && /^[A-Za-z0-9_.:-]{1,15}$/.test(session.interface)
+		? session.interface : '';
+}
+
+function sessionChannel(session) {
+	var state = sessionState(session), iface = sessionInterface(session);
+	return session.up === true ? state + ' (QMI' + (iface ? ' / ' + iface : '') + ')' : state;
+}
+
+function sessionAddresses(session) {
+	if (!Array.isArray(session.ipv4))
+		return [];
+	return session.ipv4.filter(function(value) {
+		value = record(value);
+		return typeof value.address === 'string' && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value.address)
+			&& value.address.split('.').every(function(octet) { return Number(octet) <= 255; })
+			&& typeof value.mask === 'number' && value.mask % 1 === 0 && value.mask >= 0 && value.mask <= 32;
+	}).map(function(value) { return value.address + '/' + value.mask; });
+}
+
+function sessionDNS(session) {
+	return Array.isArray(session.dns) ? session.dns.filter(function(value) {
+		return typeof value === 'string' && value.trim() !== '';
+	}) : [];
+}
+
+function linkAddress(link) {
+	if (link.raw_ip === true)
+		return _('Not applicable (Raw IP)');
+	return typeof link.mac === 'string' && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(link.mac)
+		? link.mac : '-';
+}
+
 function row(label, value, mono) {
 	var rendered;
 
@@ -201,14 +251,17 @@ return view.extend({
 			]);
 		}
 
+		var isT99 = s.type === 't99w175';
+		var t99Session = record(isT99 && s.t99_session);
+		var t99Link = record(isT99 && s.t99_link);
 		var summary = grid([
 			card(_('SIM'), s.sim_state || '-', s.iccid ? _('ICCID detected') : ''),
 			card(_('Operator'), operatorName(s.operator)),
 			card(_('Network'), registrationName(s.registration)),
-			card(_('Data'), dataState(s), s.data_interface || '-')
+			card(_('Data'), isT99 ? sessionState(t99Session) : dataState(s),
+				isT99 ? sessionInterface(t99Session) || '-' : s.data_interface || '-')
 		]);
 
-		var isT99 = s.type === 't99w175';
 		var qmiSignal = isT99 && s.qmi_signal || {};
 		var qmiRadio = isT99 && s.qmi_radio || {};
 		var t99Temperature = isT99 && s.t99_temperature || {};
@@ -252,8 +305,10 @@ return view.extend({
 		}
 		radioRows.push(
 			row(_('Packet attached'), s.attached, true),
-			row(_('Data channel'), s.data_channel, true)
+			row(_('Data channel'), isT99 ? sessionChannel(t99Session) : s.data_channel, true)
 		);
+		if (isT99)
+			radioRows.push(row(_('IPv4 address'), sessionAddresses(t99Session), true));
 		var radio = E('table', { 'class': 'table' }, radioRows);
 
 		var modem = E('table', { 'class': 'table' }, [
@@ -268,9 +323,9 @@ return view.extend({
 			row(_('USB device'), s.usb_device, true),
 			row(_('AT port'), s.at_port, true),
 			row(_('Data interface'), s.data_interface, true),
-			row(_('Data MAC'), s.data_mac, true),
+			row(_('Data MAC'), isT99 ? linkAddress(t99Link) : s.data_mac, true),
 			row(_('PDP contexts'), s.pdp_contexts, true),
-			row(_('DNS profiles'), s.dns, true)
+			row(isT99 ? _('DNS servers') : _('DNS profiles'), isT99 ? sessionDNS(t99Session) : s.dns, true)
 		]);
 
 		return E([], [
