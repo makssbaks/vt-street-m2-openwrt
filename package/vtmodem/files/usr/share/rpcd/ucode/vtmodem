@@ -49,6 +49,53 @@ function lines(dev, cmd, prefix) {
 	return result;
 }
 
+function qmi_fields(value, names) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object')
+		return false;
+
+	let result = {};
+	for (let name in names) {
+		let v = value[name];
+		if (v != null && type(v) != 'int' && type(v) != 'double')
+			return false;
+		result[name] = v ?? null;
+	}
+	return result;
+}
+
+function t99_qmi_status(device) {
+	let unavailable = { qmi_signal: null, qmi_radio: null };
+	if (device != '/dev/cdc-wdm0')
+		return unavailable;
+
+	// The standalone helper owns its timed children. Calling system() here
+	// would let an unrelated rpcd child's SIGCHLD bypass its query timeout.
+	let fd = popen('/usr/bin/ucode /usr/share/vtmodem/qmi-status.uc 2>/dev/null');
+	if (!fd)
+		return unavailable;
+
+	let out = fd.read('all') ?? '';
+	let rc = fd.close();
+	if (rc != 0 || !length(out) || length(out) > 8192)
+		return unavailable;
+
+	try {
+		let parsed = json(out);
+		if (type(parsed) != 'object')
+			return unavailable;
+		let signal = qmi_fields(parsed.qmi_signal, [ 'rssi_dbm', 'rsrp_dbm', 'rsrq_db', 'snr_db' ]);
+		let radio = qmi_fields(parsed.qmi_radio, [ 'band', 'earfcn', 'bandwidth_mhz' ]);
+		if (signal === false || radio === false)
+			return unavailable;
+		return { qmi_signal: signal, qmi_radio: radio };
+	}
+	catch (e) {
+		return unavailable;
+	}
+}
+
 function find_usb(vid_expected, pid_expected) {
 	for (let p in glob('/sys/bus/usb/devices/*/idVendor')) {
 		let d = dirname(p);
@@ -125,7 +172,7 @@ function common_status(m) {
 		registration_cs: value(dev, 'AT+CREG?', '+CREG:'),
 		attached: value(dev, 'AT+CGATT?', '+CGATT:'),
 		csq: value(dev, 'AT+CSQ', '+CSQ:'),
-		cesq: value(dev, 'AT+CESQ', '+CESQ:'),
+		cesq: m.type == 't99w175' ? '' : value(dev, 'AT+CESQ', '+CESQ:'),
 		pdp_contexts: lines(dev, 'AT+CGDCONT?', '+CGDCONT:')
 	};
 }
@@ -184,6 +231,9 @@ const methods = {
 				s.temperature = '';
 				s.data_channel = '';
 				s.dns = [];
+				let qmi = t99_qmi_status(m.control_device);
+				s.qmi_signal = qmi.qmi_signal;
+				s.qmi_radio = qmi.qmi_radio;
 			}
 
 			return s;

@@ -80,6 +80,12 @@ function rsrp(v) {
 	return String(-140 + n) + ' dBm';
 }
 
+function measurement(v, unit, fallback) {
+	if (typeof v === 'number' && isFinite(v))
+		return String(v) + (unit ? ' ' + unit : '');
+	return fallback === undefined ? '-' : fallback;
+}
+
 function temperature(v) {
 	var n = parseInt(v, 10);
 	return isNaN(n) ? '-' : String(n) + ' °C';
@@ -153,22 +159,39 @@ return view.extend({
 			card(_('Data'), dataState(s), s.data_interface || '-')
 		]);
 
-		var signal = grid([
-			card(_('RSSI'), rssi(s.csq)),
-			card(_('RSRP'), rsrp(s.cesq)),
-			card(_('RSRQ'), rsrq(s.cesq)),
-			card(_('Temperature'), temperature(s.temperature))
-		]);
+		var isT99 = s.type === 't99w175';
+		var qmiSignal = isT99 && s.qmi_signal || {};
+		var qmiRadio = isT99 && s.qmi_radio || {};
+		var signalCards = [
+			card(_('RSSI'), measurement(qmiSignal.rssi_dbm, 'dBm', rssi(s.csq))),
+			card(_('RSRP'), measurement(qmiSignal.rsrp_dbm, 'dBm', rsrp(s.cesq))),
+			card(_('RSRQ'), measurement(qmiSignal.rsrq_db, 'dB', rsrq(s.cesq)))
+		];
+		if (isT99)
+			signalCards.push(card(_('SNR'), measurement(qmiSignal.snr_db, 'dB')));
+		signalCards.push(card(_('Temperature'), temperature(s.temperature)));
+		var signal = grid(signalCards);
 
-		var radio = E('table', { 'class': 'table' }, [
+		var radioRows = [
 			row(_('LTE registration'), registrationName(s.registration)),
-			row(_('Raw CEREG'), s.registration, true),
+			row(_('Raw CEREG'), s.registration, true)
+		];
+		if (isT99) {
+			var band = measurement(qmiRadio.band);
+			radioRows.push(
+				row(_('LTE band'), band === '-' ? '-' : 'B' + band),
+				row(_('EARFCN'), measurement(qmiRadio.earfcn)),
+				row(_('Channel bandwidth'), measurement(qmiRadio.bandwidth_mhz, 'MHz'))
+			);
+		}
+		radioRows.push(
 			row(_('Extended signal'), s.xcesq, true),
 			row(_('Cell measurement'), s.cell_measurement, true),
 			row(_('LTE CA state'), s.ca_state, true),
 			row(_('Packet attached'), s.attached, true),
 			row(_('Data channel'), s.data_channel, true)
-		]);
+		);
+		var radio = E('table', { 'class': 'table' }, radioRows);
 
 		var modem = E('table', { 'class': 'table' }, [
 			row(_('Manufacturer'), s.manufacturer),
