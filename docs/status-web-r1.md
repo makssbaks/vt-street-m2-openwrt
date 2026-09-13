@@ -58,5 +58,6 @@ sh -n scripts/install-status-web.sh
 Rendering fixtures cover the existing telemetry fields and labels. Deterministic
 refresh tests cover timing, request coalescing, error recovery, valid modem
 absence, hidden tabs, interval changes, detachment and Back/Forward cache
-lifecycle. Installation and automatic refresh on the router require the next
-user verification; the preceding radio no-op apply has already been confirmed.
+lifecycle. On 2026-09-13 the user installed the update successfully, supplied a
+screenshot with Russian labels and live telemetry, and confirmed the timestamp
+updated automatically. Router backup: `/root/vt-status-web-backup.PLAIhm`.

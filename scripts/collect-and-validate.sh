@@ -3,6 +3,7 @@ set -euo pipefail
 
 OPENWRT_DIR="${1:-$PWD/openwrt}"
 ARTIFACT_DIR="${2:-$PWD/artifacts}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$ARTIFACT_DIR"
 
 TARGET_DIR="$OPENWRT_DIR/bin/targets/ramips/mt7621"
@@ -129,10 +130,23 @@ else
   exit 1
 fi
 
+ROOTFS="$(find "$TMP" -type f -name root -print -quit)"
+UNSQUASHFS="$OPENWRT_DIR/staging_dir/host/bin/unsquashfs4"
+if [[ -z "$ROOTFS" || ! -x "$UNSQUASHFS" ]]; then
+  echo 'ERROR: sysupgrade root or OpenWrt unsquashfs4 tool is missing' | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
+  exit 1
+fi
+# The package lives under these paths. Avoid unrelated device nodes in /dev
+# when extracting as an unprivileged CI user.
+"$UNSQUASHFS" -no-progress -d "$TMP/firmware-root" "$ROOTFS" etc lib usr www
+python3 "$REPO_DIR/scripts/validate-vtmodem-root.py" "$TMP/firmware-root" \
+  | tee "$ARTIFACT_DIR/VT_MODEM_FILES.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+
 {
   echo
   echo '===== RESULT ====='
   echo 'Basic build checks passed.'
   echo 'VT-STREET-M2 NAND sysupgrade routing validated.'
+  echo 'VT Modem runtime files match the source inside the actual firmware root.'
   echo 'FLASHING IS NOT YET APPROVED; inspect DTB/MTD and sysupgrade metadata first.'
 } | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
