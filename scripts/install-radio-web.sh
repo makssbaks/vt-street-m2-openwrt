@@ -70,7 +70,7 @@ while IFS= read -r f; do
 		rm -f "/$f"
 	fi
 done < paths
-rm -f /tmp/luci-indexcache
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*.json
 /etc/init.d/rpcd restart
 echo VT_RADIO_WEB_RESTORED
 RESTORE
@@ -97,7 +97,7 @@ for f in $files; do
 	mv -f "/$f.vt-radio-new" "/$f"
 	cmp "$src/$f" "/$f"
 done
-rm -f /tmp/luci-indexcache
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*.json
 /etc/init.d/rpcd restart
 trap - EXIT HUP INT TERM
 echo VT_RADIO_WEB_INSTALLED
