@@ -28,57 +28,96 @@ function text(v) {
 }
 
 function mergeMessages(messages) {
-	var groups = {}, out = [];
+	var groups = Object.create(null), out = [];
+	var windowMs = 10 * 60 * 1000;
 
-	(messages || []).forEach(function(m) {
+	function integer(v, min, max) {
+		return v !== null && v !== undefined && v !== '' &&
+			Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max;
+	}
+
+	function separate(m, complete, reason) {
+		out.push({
+			sender: m.sender || '', time: m.time || '', text: m.text || '',
+			ids: [ Number(m.id) ], complete: complete, parts_count: 1,
+			total: Number(m.concat_total || 0), merge_warning: reason || ''
+		});
+	}
+
+	(Array.isArray(messages) ? messages : []).forEach(function(m) {
+		if (!m || typeof(m) !== 'object')
+			return;
 		var total = Number(m.concat_total || 0);
 		var seq = Number(m.concat_seq || 0);
-		var ref = Number(m.concat_ref || 0);
-
-		if (total > 1 && seq > 0) {
-			var bucket = String(m.time || '').substring(0, 13);
-			var key = [m.sender || '', ref, total, bucket].join('|');
-			if (!groups[key]) {
-				groups[key] = {
-					sender: m.sender || '',
-					time: m.time || '',
-					parts: [],
-					ids: [],
-					total: total,
-					ref: ref
-				};
-			}
-			groups[key].parts.push(m);
-			groups[key].ids.push(Number(m.id));
-			if (String(m.time || '') < String(groups[key].time || ''))
-				groups[key].time = m.time || '';
+		if (total === 0 && seq === 0 || total === 1 && seq === 1) {
+			separate(m, true);
+			return;
 		}
-		else {
-			out.push({
-				sender: m.sender || '',
-				time: m.time || '',
-				text: m.text || '',
-				ids: [ Number(m.id) ],
-				complete: true,
-				parts_count: 1
-			});
+		if (!integer(m.concat_total, 2, 255) || !integer(m.concat_seq, 1, total) ||
+			!integer(m.concat_ref, 0, 65535) ||
+			(m.dcs != null && !integer(m.dcs, 0, 255))) {
+			separate(m, false, _('Invalid multipart metadata; part shown separately.'));
+			return;
 		}
+		var timestamp = Date.parse(m.time || '');
+		if (!Number.isFinite(timestamp)) {
+			separate(m, false, _('Unknown multipart timestamp; part shown separately.'));
+			return;
+		}
+		var key = JSON.stringify([ m.sender || '', Number(m.concat_ref), total,
+			m.dcs == null ? null : Number(m.dcs) ]);
+		if (!groups[key])
+			groups[key] = [];
+		groups[key].push({ message: m, seq: seq, timestamp: timestamp });
 	});
 
-	Object.keys(groups).forEach(function(k) {
-		var g = groups[k];
-		g.parts.sort(function(a, b) {
-			return Number(a.concat_seq || 0) - Number(b.concat_seq || 0);
+	function finish(parts) {
+		if (!parts.length)
+			return;
+		var total = Number(parts[0].message.concat_total);
+		var seen = Object.create(null), ambiguous = false;
+		parts.forEach(function(p) {
+			if (seen[p.seq])
+				ambiguous = true;
+			seen[p.seq] = true;
 		});
+		// Do not guess which message owns a repeated sequence/reference, even
+		// when duplicate text looks identical. Each uncertain part keeps its ID.
+		// Chained arrivals spanning the window are also kept separate rather
+		// than split at an arbitrary point which could mix two real messages.
+		if (ambiguous || parts[parts.length - 1].timestamp - parts[0].timestamp > windowMs) {
+			parts.forEach(function(p) {
+				separate(p.message, false, _('Ambiguous multipart parts; shown separately.'));
+			});
+			return;
+		}
+		var first = parts[0].message;
+		parts.sort(function(a, b) { return a.seq - b.seq; });
+		var complete = true;
+		for (var i = 1; i <= total; i++)
+			if (!seen[i])
+				complete = false;
 		out.push({
-			sender: g.sender,
-			time: g.time,
-			text: g.parts.map(function(p) { return p.text || ''; }).join(''),
-			ids: g.ids,
-			complete: g.parts.length === g.total,
-			parts_count: g.parts.length,
-			total: g.total
+			sender: first.sender || '', time: first.time || '',
+			text: parts.map(function(p) { return p.message.text || ''; }).join(''),
+			ids: parts.map(function(p) { return Number(p.message.id); }),
+			complete: complete, parts_count: parts.length, total: total
 		});
+	}
+
+	Object.keys(groups).forEach(function(k) {
+		var sorted = groups[k].sort(function(a, b) {
+			return a.timestamp - b.timestamp || Number(a.message.id) - Number(b.message.id);
+		});
+		var parts = [];
+		sorted.forEach(function(p) {
+			if (parts.length && p.timestamp - parts[parts.length - 1].timestamp > windowMs) {
+				finish(parts);
+				parts = [];
+			}
+			parts.push(p);
+		});
+		finish(parts);
 	});
 
 	out.sort(function(a, b) {
@@ -237,7 +276,9 @@ return view.extend({
 
 				merged.forEach(function(m) {
 					var msg = m.text;
-					if (!m.complete)
+					if (m.merge_warning)
+						msg += '\n[' + m.merge_warning + ']';
+					else if (!m.complete)
 						msg += String.format(_(' [multipart incomplete: %d/%d]'), m.parts_count, m.total);
 					var del = E('button', {
 						'class': 'btn cbi-button-negative',
@@ -245,12 +286,23 @@ return view.extend({
 							if (!confirm(_('Delete this SMS?')))
 								return;
 							del.disabled = true;
+							var deleted = 0;
 							var chain = Promise.resolve();
 							m.ids.forEach(function(id) {
-								chain = chain.then(function() { return callSmsDelete(id); });
+								chain = chain.then(function() {
+									return callSmsDelete(id).then(function(r) {
+										if (!r || r.ok !== true)
+											throw new Error(text(r && r.error || _('SMS deletion failed.')));
+										deleted++;
+									});
+								});
 							});
 							return chain.then(function() { window.location.reload(); })
-								.catch(function(e) { ui.addNotification(null, E('p', {}, [ text(e) ])); })
+								.catch(function(e) {
+									ui.addNotification(null, E('p', {}, [ String.format(
+										_('SMS deletion stopped: %s. Deleted %d of %d part(s). Refresh the inbox before retrying.'),
+										text(e && e.message || e), deleted, m.ids.length) ]), 'error');
+								})
 								.finally(function() { del.disabled = false; });
 						})
 					}, [ _('Delete') ]);
