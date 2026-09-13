@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=10
+PKG_RELEASE:=11
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -70,6 +70,10 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/usr/share/luci/menu.d/luci-app-vtmodem.json \
 		$(1)/usr/share/luci/menu.d/luci-app-vtmodem.json
+
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/protocol
+	$(INSTALL_DATA) ./files/www/luci-static/resources/protocol/t99w175qmi.js \
+		$(1)/www/luci-static/resources/protocol/t99w175qmi.js
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/vtmodem
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/vtmodem/status.js \
