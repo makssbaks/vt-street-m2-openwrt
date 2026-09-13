@@ -1,0 +1,14 @@
+RAT:LTE
+mcc:250,mnc:99
+lte_cell_id:118667785
+lte_tac:1446
+lte_tx_pwr:12.0dBm
+lte_ant_rsrp:rx_diversity:3 (-106.6dBm,-110.8dBm,NA,NA)
+pcell: lte_band:3 lte_band_width:15.0MHz
+channel:1275 pci:213
+lte_rsrp:-106.7dBm,rsrq:-16.5dB
+lte_rssi:-69.9dBm,lte_snr:2.4dB
+scell: lte_band:1 lte_band_width:10.0MHz
+channel:550 pci:224
+lte_rsrp:-111.6dBm,rsrq:-17.3dB
+lte_rssi:-75.2dBm,lte_snr:12.4dB

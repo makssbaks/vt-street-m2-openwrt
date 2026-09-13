@@ -49,6 +49,184 @@ function lines(dev, cmd, prefix) {
 	return result;
 }
 
+function telemetry_number(value) {
+	return (type(value) == 'int' || type(value) == 'double') &&
+		value >= -1.7976931348623157e308 && value <= 1.7976931348623157e308;
+}
+
+function qmi_fields(value, names) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object')
+		return false;
+
+	let result = {};
+	for (let name in names) {
+		let v = value[name];
+		if (v != null && !telemetry_number(v))
+			return false;
+		result[name] = v ?? null;
+	}
+	return result;
+}
+
+function t99_carriers(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'array' || length(value) > 32)
+		return false;
+	let carriers = [];
+	for (let entry in value) {
+		if (type(entry) != 'object' || type(entry.role) != 'string' ||
+			!match(entry.role, /^(pcc|scc[1-9][0-9]*)$/))
+			return false;
+		let carrier = qmi_fields(entry, [ 'band', 'bandwidth_mhz' ]);
+		if (carrier === false)
+			return false;
+		carrier.role = entry.role;
+		push(carriers, carrier);
+	}
+	return carriers;
+}
+
+function t99_cells(value) {
+	if (value == null)
+		return null;
+	let radio = qmi_fields(value, [ 'cell_id', 'tac', 'tx_power_dbm' ]);
+	if (radio === false || type(value.cells) != 'array' || length(value.cells) > 32)
+		return false;
+	radio.cells = [];
+	for (let entry in value.cells) {
+		if (type(entry) != 'object' || (entry.role != 'primary' && entry.role != 'secondary'))
+			return false;
+		let cell = qmi_fields(entry, [ 'band', 'bandwidth_mhz', 'earfcn', 'pci',
+			'rsrp_dbm', 'rsrq_db', 'rssi_dbm', 'snr_db' ]);
+		if (cell === false)
+			return false;
+		cell.role = entry.role;
+		push(radio.cells, cell);
+	}
+	radio.antenna_rsrp_dbm = null;
+	if (value.antenna_rsrp_dbm != null) {
+		if (type(value.antenna_rsrp_dbm) != 'array' || length(value.antenna_rsrp_dbm) > 16)
+			return false;
+		radio.antenna_rsrp_dbm = [];
+		for (let antenna in value.antenna_rsrp_dbm) {
+			if (antenna != null && !telemetry_number(antenna))
+				return false;
+			push(radio.antenna_rsrp_dbm, antenna);
+		}
+	}
+	return radio;
+}
+
+function t99_sim_id(value) {
+	if (value == null)
+		return null;
+	return type(value) == 'string' && match(value, /^[0-9]{19,20}$/) ? value : false;
+}
+
+function t99_session_info(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object' || type(value.up) != 'bool' ||
+		(value.pending != null && type(value.pending) != 'bool') ||
+		(value.available != null && type(value.available) != 'bool') ||
+		(value.interface != null && value.interface != 'wwan0') ||
+		(value.up && value.interface != 'wwan0') ||
+		type(value.ipv4) != 'array' || length(value.ipv4) > 32 ||
+		type(value.dns) != 'array' || length(value.dns) > 16)
+		return false;
+	let session = {
+		up: value.up, pending: value.pending ?? null,
+		available: value.available ?? null, interface: value.interface ?? null,
+		ipv4: [], dns: []
+	};
+	// The isolated session parser checks complete IP address semantics.
+	// This boundary checks type, shape and bounds without importing it into rpcd.
+	for (let entry in value.ipv4) {
+		if (type(entry) != 'object' || type(entry.address) != 'string' ||
+			length(entry.address) > 15 || !match(entry.address, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) ||
+			!telemetry_number(entry.mask) || entry.mask < 0 || entry.mask > 32 || int(entry.mask) != entry.mask)
+			return false;
+		push(session.ipv4, { address: entry.address, mask: int(entry.mask) });
+	}
+	for (let address in value.dns) {
+		if (type(address) != 'string' || !length(address) || length(address) > 45 ||
+			!match(address, /^[0-9a-fA-F:.]+$/) || (index(address, '.') < 0 && index(address, ':') < 0))
+			return false;
+		push(session.dns, address);
+	}
+	if (!session.up) {
+		session.ipv4 = [];
+		session.dns = [];
+	}
+	return session;
+}
+
+function t99_link_info(value) {
+	if (value == null)
+		return null;
+	if (type(value) != 'object' || (value.raw_ip != null && type(value.raw_ip) != 'bool') ||
+		(value.mac != null && (type(value.mac) != 'string' ||
+			!match(value.mac, /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/))))
+		return false;
+	return { raw_ip: value.raw_ip ?? null, mac: value.raw_ip === true ? null : (value.mac ?? null) };
+}
+
+function decode_t99_status(out) {
+	let result = {
+		qmi_signal: null, qmi_radio: null, t99_temperature: null,
+		t99_ca: null, t99_radio: null, t99_iccid: null,
+		t99_session: null, t99_link: null
+	};
+	if (type(out) != 'string' || !length(out) || length(out) > 8192)
+		return result;
+
+	try {
+		let parsed = json(out);
+		if (type(parsed) != 'object')
+			return result;
+		let signal = qmi_fields(parsed.qmi_signal, [ 'rssi_dbm', 'rsrp_dbm', 'rsrq_db', 'snr_db' ]);
+		let radio = qmi_fields(parsed.qmi_radio, [ 'band', 'earfcn', 'bandwidth_mhz' ]);
+		let temperature = qmi_fields(parsed.t99_temperature, [ 'tsens_c', 'pa_c', 'skin_c' ]);
+		let carriers = t99_carriers(parsed.t99_ca);
+		let cells = t99_cells(parsed.t99_radio);
+		let iccid = t99_sim_id(parsed.t99_iccid);
+		let session = t99_session_info(parsed.t99_session);
+		let link = t99_link_info(parsed.t99_link);
+		// Each optional source is independent: malformed CA must not hide
+		// valid signal measurements or temperatures returned in this reply.
+		result.qmi_signal = signal === false ? null : signal;
+		result.qmi_radio = radio === false ? null : radio;
+		result.t99_temperature = temperature === false ? null : temperature;
+		result.t99_ca = carriers === false ? null : carriers;
+		result.t99_radio = cells === false ? null : cells;
+		result.t99_iccid = iccid === false ? null : iccid;
+		result.t99_session = session === false ? null : session;
+		result.t99_link = link === false ? null : link;
+	}
+	catch (e) {
+		return result;
+	}
+	return result;
+}
+
+function t99_qmi_status(device) {
+	if (device != '/dev/cdc-wdm0')
+		return decode_t99_status('');
+
+	// The standalone helper owns its timed children. Calling system() here
+	// would let an unrelated rpcd child's SIGCHLD bypass its query timeout.
+	let fd = popen('/usr/bin/ucode /usr/share/vtmodem/qmi-status.uc 2>/dev/null');
+	if (!fd)
+		return decode_t99_status('');
+
+	let out = fd.read('all') ?? '';
+	let rc = fd.close();
+	return decode_t99_status(rc == 0 ? out : '');
+}
+
 function find_usb(vid_expected, pid_expected) {
 	for (let p in glob('/sys/bus/usb/devices/*/idVendor')) {
 		let d = dirname(p);
@@ -118,14 +296,14 @@ function common_status(m) {
 		imei: value(dev, 'AT+CGSN'),
 		cfun: value(dev, 'AT+CFUN?', '+CFUN:'),
 		sim_state: value(dev, 'AT+CPIN?', '+CPIN:'),
-		iccid: value(dev, 'AT+CCID', '+CCID:'),
+		iccid: m.type == 't99w175' ? '' : value(dev, 'AT+CCID', '+CCID:'),
 		imsi: value(dev, 'AT+CIMI'),
 		operator: value(dev, 'AT+COPS?', '+COPS:'),
 		registration: value(dev, 'AT+CEREG?', '+CEREG:'),
 		registration_cs: value(dev, 'AT+CREG?', '+CREG:'),
 		attached: value(dev, 'AT+CGATT?', '+CGATT:'),
 		csq: value(dev, 'AT+CSQ', '+CSQ:'),
-		cesq: value(dev, 'AT+CESQ', '+CESQ:'),
+		cesq: m.type == 't99w175' ? '' : value(dev, 'AT+CESQ', '+CESQ:'),
 		pdp_contexts: lines(dev, 'AT+CGDCONT?', '+CGDCONT:')
 	};
 }
@@ -184,6 +362,15 @@ const methods = {
 				s.temperature = '';
 				s.data_channel = '';
 				s.dns = [];
+				let qmi = t99_qmi_status(m.control_device);
+				s.qmi_signal = qmi.qmi_signal;
+				s.qmi_radio = qmi.qmi_radio;
+				s.t99_temperature = qmi.t99_temperature;
+				s.t99_ca = qmi.t99_ca;
+				s.t99_radio = qmi.t99_radio;
+				s.iccid = qmi.t99_iccid ?? '';
+				s.t99_session = qmi.t99_session;
+				s.t99_link = qmi.t99_link;
 			}
 
 			return s;

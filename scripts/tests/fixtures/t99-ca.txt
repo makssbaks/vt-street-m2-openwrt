@@ -1,0 +1,3 @@
+LTE serving information :
+PCC info: Band is LTE_B3, Band_width is 15.0 MHz
+SCC1 info: Band is LTE_B1, Band_width is 10.0 MHz

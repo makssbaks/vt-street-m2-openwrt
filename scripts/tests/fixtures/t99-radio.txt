@@ -1,0 +1,12 @@
+[/dev/cdc-wdm0] Successfully got RF band info
+Band Information:
+        Radio Interface:   'lte'
+        Active Band Class: 'eutran-3'
+        Active Channel:    '1275'
+Band Information (Extended):
+        Radio Interface:   'lte'
+        Active Band Class: 'eutran-3'
+        Active Channel:    '1275'
+Bandwidth:
+        Radio Interface:   'lte'
+        Bandwidth:         '15'

@@ -1,0 +1,3 @@
+PA: 30C
+Skin Sensor: 28C
+TSENS: 29C
