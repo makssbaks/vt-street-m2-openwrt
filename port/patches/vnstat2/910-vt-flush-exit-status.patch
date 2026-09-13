@@ -1,0 +1,51 @@
+Subject: vnstatd: report final database save failures to VT supervisor
+
+Upstream 2.13 logs nonfatal SQLite errors while flushing at shutdown but
+returns success. Preserve that error (and close failure) in the exit status,
+so a configuration-backup caller cannot acknowledge an unsuccessful save.
+A private read-only capability option rejects unpatched installations.
+
+Source: https://github.com/vergoh/vnstat/blob/v2.13/src/vnstatd.c
+
+--- a/src/vnstatd.c
++++ b/src/vnstatd.c
+@@ -27,10 +27,16 @@
+ 
+ int main(int argc, char *argv[])
+ {
+-	int currentarg;
++	int currentarg, flush_failed;
+ 	uint32_t previflisthash;
+ 	uint64_t temp;
+ 	DSTATE s;
++
++	/* Private supervisor capability: query without touching config or DB. */
++	if (argc == 2 && strcmp(argv[1], "--vt-flush-exit-status") == 0) {
++		puts("VT_VNSTAT_FLUSH_EXIT_V1");
++		return EXIT_SUCCESS;
++	}
+ 
+ 	initdstate(&s);
+ 
+@@ -234,7 +240,11 @@
+ 	}
+ 
+ 	flushcachetodisk(&s);
+-	db_close();
++	/* Preserve a nonfatal save error before later cleanup can change it. */
++	flush_failed = db_errcode != SQLITE_OK;
++	if (!db_close()) {
++		flush_failed = 1;
++	}
+ 
+ 	datacache_clear(&s.dcache);
+ 	ibwflush();
+@@ -244,7 +254,7 @@
+ 		unlink(cfg.pidfile);
+ 	}
+ 
+-	return 0;
++	return flush_failed ? EXIT_FAILURE : EXIT_SUCCESS;
+ }
+ 
+ void showhelp(void)

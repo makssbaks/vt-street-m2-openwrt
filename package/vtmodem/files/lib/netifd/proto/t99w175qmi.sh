@@ -6,9 +6,12 @@
 	init_proto "$@"
 }
 
+. "${T99_QMI_LIBRARY:-/usr/share/vtmodem/t99-qmi.sh}"
+
 proto_t99w175qmi_init_config() {
 	available=1
 	no_device=1
+	teardown_on_l3_link_down=1
 	proto_config_add_int delay
 	proto_config_add_int registration_timeout
 	proto_config_add_string pdptype
@@ -21,100 +24,12 @@ proto_t99w175qmi_init_config() {
 	proto_config_add_defaults
 }
 
-qmi_alloc_wds_cid() {
-	qmicli -d "$1" -p --wds-noop --client-no-release-cid 2>/dev/null |
-		awk -F"'" '/CID:/{print $2; exit}'
-}
-
-qmi_release_wds_cid() {
-	local device="$1" cid="$2"
-	[ -n "$cid" ] || return 0
-	qmicli -d "$device" -p --client-cid="$cid" --wds-noop >/dev/null 2>&1 || true
-}
-
-qmi_reg_state() {
-	qmicli -d "$1" -p --nas-get-serving-system 2>/dev/null |
-		awk -F"'" '/Registration state:/{print $2; exit}'
-}
-
-qmi_start_bearer() {
-	local device="$1" cid="$2" iptype="$3"
-	local apn="$4" auth="$5" user="$6" pass="$7"
-	local args="ip-type=$iptype"
-
-	[ -n "$apn" ] && args="$args,apn=$apn"
-	[ -n "$auth" ] && [ "$auth" != "NONE" ] && args="$args,auth=$auth"
-	[ -n "$user" ] && args="$args,username=$user"
-	[ -n "$pass" ] && args="$args,password=$pass"
-
-	qmicli -d "$device" -p \
-		--client-cid="$cid" --client-no-release-cid \
-		--wds-start-network="$args" 2>/dev/null |
-		awk -F"'" '/Packet data handle:/{print $2; exit}'
-}
-
-qmi_is_connected() {
-	qmicli -d "$1" -p \
-		--client-cid="$2" --client-no-release-cid \
-		--wds-get-packet-service-status 2>/dev/null |
-		grep -q "'connected'"
-}
-
-qmi_stop_bearer() {
-	local device="$1" cid="$2" pdh="$3"
-	[ -n "$cid" ] || return 0
-
-	[ -n "$pdh" ] && qmicli -d "$device" -p \
-		--client-cid="$cid" --client-no-release-cid \
-		--wds-stop-network="$pdh" >/dev/null 2>&1 || true
-
-	qmicli -d "$device" -p \
-		--client-cid="$cid" --client-no-release-cid \
-		--wds-stop-network=disable-autoconnect >/dev/null 2>&1 || true
-
-	qmi_release_wds_cid "$device" "$cid"
-}
-
-qmi_prepare_raw_ip() {
-	local device="$1" ifname="$2"
-
-	qmicli -d "$device" -p \
-		--wda-set-data-format="link-layer-protocol=raw-ip" >/dev/null 2>&1 || true
-
-	if [ -w "/sys/class/net/$ifname/qmi/raw_ip" ] && \
-	   ! grep -q '^Y' "/sys/class/net/$ifname/qmi/raw_ip" 2>/dev/null; then
-		ip link set dev "$ifname" down >/dev/null 2>&1 || true
-		echo Y >"/sys/class/net/$ifname/qmi/raw_ip" || return 1
-		ip link set dev "$ifname" up >/dev/null 2>&1 || true
-	fi
-
-	return 0
-}
-
-qmi_wait_registered() {
-	local device="$1" timeout="$2"
-	local elapsed=0 state
-
-	while [ "$elapsed" -lt "$timeout" ]; do
-		state="$(qmi_reg_state "$device")"
-		[ "$state" = "registered" ] && return 0
-		case "$state" in
-			searching|not-registered|unknown|'') ;;
-			*) echo "T99W175 registration state: $state" ;;
-		esac
-		sleep 1
-		elapsed=$((elapsed + 1))
-	done
-
-	return 1
-}
-
-proto_t99w175qmi_setup() {
+qmi_setup_transaction() {
 	local interface="$1"
-	local device="/dev/cdc-wdm0" devname devpath ifname
+	local devname devpath
 	local apn auth username password delay registration_timeout pdptype
 	local defaultroute peerdns sourcefilter delegate ip4table
-	local cid_4 pdh_4 cid_6 pdh_6 raw
+	local cid pdh cid_4 pdh_4 cid_6 pdh_6 raw family
 	local ip_4 subnet_4 gateway_4 dns1_4 dns2_4 mtu_4
 	local ip_6 ip_prefix_6 gateway_6 dns1_6 dns2_6
 	local $PROTO_DEFAULT_OPTIONS
@@ -122,8 +37,17 @@ proto_t99w175qmi_setup() {
 	json_get_vars delay registration_timeout pdptype apn auth username password
 	json_get_vars sourcefilter delegate ip4table defaultroute peerdns
 
-	[ -n "$delay" ] && [ "$delay" -gt 0 ] && sleep "$delay"
-	[ -n "$registration_timeout" ] || registration_timeout=60
+	case "$delay" in ''|*[!0-9]*) delay=0 ;; esac
+	[ "$delay" -le 120 ] || delay=120
+	[ "$delay" -eq 0 ] || sleep "$delay"
+	case "$registration_timeout" in ''|*[!0-9]*) registration_timeout=60 ;; esac
+	[ "$registration_timeout" -gt 0 ] && [ "$registration_timeout" -le 600 ] || registration_timeout=60
+	# qmicli key=value values are quoted below. Reject characters that cannot
+	# be represented safely in that grammar instead of silently truncating.
+	for raw in "$apn" "$username" "$password"; do
+		case "$raw" in *"'"*|*'
+'*|*"$(printf '\r')"*) proto_notify_error "$interface" INVALID_CREDENTIALS; return 1 ;; esac
+	done
 	[ -n "$apn" ] || apn="internet"
 
 	auth="$(printf '%s' "$auth" | tr '[:lower:]' '[:upper:]')"
@@ -153,7 +77,8 @@ proto_t99w175qmi_setup() {
 		return 1
 	}
 
-	qmicli -d "$device" -p --dms-set-operating-mode=online >/dev/null 2>&1 || true
+	qmi_new_state || { proto_notify_error "$interface" STATE_FAILED; return 1; }
+	qmi_call -d "$device" -p --dms-set-operating-mode=online >/dev/null 2>&1 || true
 
 	qmi_prepare_raw_ip "$device" "$ifname" || {
 		proto_notify_error "$interface" RAW_IP_FAILED
@@ -166,54 +91,32 @@ proto_t99w175qmi_setup() {
 		return 1
 	}
 
-	if [ "$pdptype" = "ip" ] || [ "$pdptype" = "ipv4v6" ]; then
-		cid_4="$(qmi_alloc_wds_cid "$device")"
-		if [ -n "$cid_4" ]; then
-			qmicli -d "$device" -p --client-cid="$cid_4" --client-no-release-cid \
-				--wds-set-ip-family=4 >/dev/null 2>&1 || true
-			pdh_4="$(qmi_start_bearer "$device" "$cid_4" 4 "$apn" "$auth" "$username" "$password")"
-			if [ -z "$pdh_4" ] || ! qmi_is_connected "$device" "$cid_4"; then
-				qmi_stop_bearer "$device" "$cid_4" "$pdh_4"
-				cid_4=""; pdh_4=""
-			fi
-		fi
-	fi
-
-	if [ "$pdptype" = "ipv6" ] || [ "$pdptype" = "ipv4v6" ]; then
-		cid_6="$(qmi_alloc_wds_cid "$device")"
-		if [ -n "$cid_6" ]; then
-			qmicli -d "$device" -p --client-cid="$cid_6" --client-no-release-cid \
-				--wds-set-ip-family=6 >/dev/null 2>&1 || true
-			pdh_6="$(qmi_start_bearer "$device" "$cid_6" 6 "$apn" "$auth" "$username" "$password")"
-			if [ -z "$pdh_6" ] || ! qmi_is_connected "$device" "$cid_6"; then
-				qmi_stop_bearer "$device" "$cid_6" "$pdh_6"
-				cid_6=""; pdh_6=""
-			fi
-		fi
-	fi
-
-	[ -n "$cid_4" ] || [ -n "$cid_6" ] || {
-		proto_notify_error "$interface" CALL_FAILED
-		return 1
-	}
-
-	proto_init_update "$ifname" 1
-	proto_set_keep 1
-	proto_add_data
-	[ -n "$cid_4" ] && {
-		json_add_string cid_4 "$cid_4"
-		json_add_string pdh_4 "$pdh_4"
-	}
-	[ -n "$cid_6" ] && {
-		json_add_string cid_6 "$cid_6"
-		json_add_string pdh_6 "$pdh_6"
-	}
-	proto_close_data
-	proto_send_update "$interface"
+	# Persist every allocated CID before starting a bearer. A failed family
+	# aborts the transaction, so dual stack never leaves an unreported session.
+	for family in 4 6; do
+		[ "$family:$pdptype" != '4:ipv6' ] || continue
+		[ "$family:$pdptype" != '6:ip' ] || continue
+		cid="$(qmi_alloc_wds_cid "$device" "$family")" || {
+			proto_notify_error "$interface" CLIENT_ALLOCATION_FAILED; return 1;
+		}
+		qmi_call -d "$device" -p --client-cid="$cid" --client-no-release-cid \
+			--wds-set-ip-family="$family" >/dev/null 2>&1 || {
+			proto_notify_error "$interface" IP_FAMILY_FAILED; return 1;
+		}
+		pdh="$(qmi_start_bearer "$device" "$cid" "$family" "$apn" "$auth" "$username" "$password")" || {
+			proto_notify_error "$interface" CALL_FAILED; return 1;
+		}
+		[ "$(qmi_packet_state "$device" "$cid")" = connected ] || {
+			proto_notify_error "$interface" CALL_FAILED; return 1;
+		}
+		if [ "$family" = 4 ]; then cid_4="$cid"; pdh_4="$pdh"; else cid_6="$cid"; pdh_6="$pdh"; fi
+	done
 
 	if [ -n "$cid_4" ]; then
-		raw="$(qmicli -d "$device" -p --client-cid="$cid_4" --client-no-release-cid \
-			--wds-get-current-settings 2>/dev/null)"
+		raw="$(qmi_call -d "$device" -p --client-cid="$cid_4" --client-no-release-cid \
+			--wds-get-current-settings 2>/dev/null)" || {
+			proto_notify_error "$interface" SETTINGS_FAILED; return 1;
+		}
 		ip_4="$(printf '%s\n' "$raw" | awk '/IPv4 address:/{print $NF; exit}')"
 		subnet_4="$(printf '%s\n' "$raw" | awk '/IPv4 subnet mask:/{print $NF; exit}')"
 		gateway_4="$(printf '%s\n' "$raw" | awk '/IPv4 gateway address:/{print $NF; exit}')"
@@ -221,32 +124,19 @@ proto_t99w175qmi_setup() {
 		dns2_4="$(printf '%s\n' "$raw" | awk '/IPv4 secondary DNS:/{print $NF; exit}')"
 		mtu_4="$(printf '%s\n' "$raw" | awk '/MTU:/{print $NF; exit}')"
 
-		[ -n "$ip_4" ] && [ -n "$subnet_4" ] || {
-			qmi_stop_bearer "$device" "$cid_4" "$pdh_4"
-			proto_notify_error "$interface" NO_ADDRESS
-			return 1
+		qmi_valid_ip4 "$ip_4" && qmi_valid_mask4 "$subnet_4" || {
+			proto_notify_error "$interface" NO_ADDRESS; return 1;
 		}
-
-		proto_init_update "$ifname" 1
-		proto_set_keep 1
-		proto_add_ipv4_address "$ip_4" "$subnet_4"
-		[ -n "$gateway_4" ] && proto_add_ipv4_route "$gateway_4" 32
-		[ "$defaultroute" = 0 ] || [ -z "$gateway_4" ] || proto_add_ipv4_route 0.0.0.0 0 "$gateway_4"
-		[ "$peerdns" = 0 ] || {
-			[ -n "$dns1_4" ] && proto_add_dns_server "$dns1_4"
-			[ -n "$dns2_4" ] && proto_add_dns_server "$dns2_4"
+		[ -z "$gateway_4" ] || qmi_valid_ip4 "$gateway_4" || {
+			proto_notify_error "$interface" INVALID_GATEWAY; return 1;
 		}
-		proto_send_update "$interface"
-
-		case "$mtu_4" in
-			''|*[!0-9]*) ;;
-			*) [ "$mtu_4" -gt 0 ] && ip link set dev "$ifname" mtu "$mtu_4" >/dev/null 2>&1 ;;
-		esac
 	fi
 
 	if [ -n "$cid_6" ]; then
-		raw="$(qmicli -d "$device" -p --client-cid="$cid_6" --client-no-release-cid \
-			--wds-get-current-settings 2>/dev/null)"
+		raw="$(qmi_call -d "$device" -p --client-cid="$cid_6" --client-no-release-cid \
+			--wds-get-current-settings 2>/dev/null)" || {
+			proto_notify_error "$interface" SETTINGS_FAILED; return 1;
+		}
 		ip_6="$(printf '%s\n' "$raw" | awk '/IPv6 address:/{print $NF; exit}')"
 		if printf '%s' "$ip_6" | grep -q '/'; then
 			ip_prefix_6="${ip_6##*/}"
@@ -258,37 +148,95 @@ proto_t99w175qmi_setup() {
 		dns1_6="$(printf '%s\n' "$raw" | awk '/IPv6 primary DNS/{print $NF; exit}')"
 		dns2_6="$(printf '%s\n' "$raw" | awk '/IPv6 secondary DNS/{print $NF; exit}')"
 
-		if [ -n "$ip_6" ]; then
-			proto_init_update "$ifname" 1
-			proto_set_keep 1
-			proto_add_ipv6_address "$ip_6" 128
-			[ -n "$ip_prefix_6" ] && proto_add_ipv6_prefix "$ip_6/$ip_prefix_6"
-			[ -n "$gateway_6" ] && proto_add_ipv6_route "$gateway_6" 128
-			[ "$defaultroute" = 0 ] || [ -z "$gateway_6" ] || \
-				proto_add_ipv6_route ::0 0 "$gateway_6" "" "" "$ip_6/$ip_prefix_6"
-			[ "$peerdns" = 0 ] || {
-				[ -n "$dns1_6" ] && proto_add_dns_server "$dns1_6"
-				[ -n "$dns2_6" ] && proto_add_dns_server "$dns2_6"
-			}
-			proto_send_update "$interface"
+		qmi_valid_ip6 "$ip_6" || {
+			proto_notify_error "$interface" NO_ADDRESS; return 1;
+		}
+		case "$ip_prefix_6" in ''|*[!0-9]*) ip_prefix_6=128 ;; esac
+		[ "$ip_prefix_6" -le 128 ] || { proto_notify_error "$interface" NO_ADDRESS; return 1; }
+		[ -z "$gateway_6" ] || qmi_valid_ip6 "$gateway_6" || {
+			proto_notify_error "$interface" INVALID_GATEWAY; return 1;
+		}
+	fi
+
+	qmi_owned || { proto_notify_error "$interface" DEVICE_CHANGED; return 1; }
+	proto_run_command "$interface" /usr/libexec/t99w175-session monitor "$interface" "$QMI_STATE" || return 1
+	# One final publication includes validated addresses, routes and ownership.
+	proto_init_update "$ifname" 1
+	proto_add_data
+	json_add_string qmi_generation "$(cat "$QMI_STATE/generation")"
+	[ -z "$cid_4" ] || { json_add_string cid_4 "$cid_4"; json_add_string pdh_4 "$pdh_4"; }
+	[ -z "$cid_6" ] || { json_add_string cid_6 "$cid_6"; json_add_string pdh_6 "$pdh_6"; }
+	proto_close_data
+	if [ -n "$cid_4" ]; then
+		proto_add_ipv4_address "$ip_4" "$subnet_4"
+		[ -z "$gateway_4" ] || proto_add_ipv4_route "$gateway_4" 32
+		[ "$defaultroute" = 0 ] || [ -z "$gateway_4" ] || proto_add_ipv4_route 0.0.0.0 0 "$gateway_4"
+		if [ "$peerdns" != 0 ]; then
+			qmi_valid_ip4 "$dns1_4" && proto_add_dns_server "$dns1_4"
+			qmi_valid_ip4 "$dns2_4" && proto_add_dns_server "$dns2_4"
 		fi
 	fi
+	if [ -n "$cid_6" ]; then
+		proto_add_ipv6_address "$ip_6" 128
+		# A WDS address prefix is not DHCPv6 prefix delegation. Do not announce
+		# it as a delegated LAN prefix without a separate PD transaction.
+		[ -z "$gateway_6" ] || proto_add_ipv6_route "$gateway_6" 128
+		[ "$defaultroute" = 0 ] || [ -z "$gateway_6" ] || proto_add_ipv6_route ::0 0 "$gateway_6" '' '' "$ip_6/128"
+		if [ "$peerdns" != 0 ]; then
+			qmi_valid_ip6 "$dns1_6" && proto_add_dns_server "$dns1_6"
+			qmi_valid_ip6 "$dns2_6" && proto_add_dns_server "$dns2_6"
+		fi
+	fi
+	qmi_owned || return 1
+	proto_send_update "$interface" || return 1
+	case "$mtu_4" in
+		''|*[!0-9]*) ;;
+		*) [ "$mtu_4" -ge 1280 ] && [ "$mtu_4" -le 9000 ] && ip link set dev "$ifname" mtu "$mtu_4" >/dev/null 2>&1 ;;
+	esac
+	return 0
+}
+
+proto_t99w175qmi_setup() {
+	local interface="$1" device=/dev/cdc-wdm0 ifname QMI_STATE rc
+	case "$interface" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+	umask 077
+	mkdir -p "$QMI_ROOT/$interface" || return 1
+	exec 9>>"$QMI_ROOT/$interface/lock" || return 1
+	# A cancelled bounded QMI child or cleanup worker may still own this lock.
+	flock -w 12 9 || { exec 9>&-; proto_notify_error "$interface" CLEANUP_BUSY; return 1; }
+	qmi_drain_states || {
+		exec 9>&-
+		proto_notify_error "$interface" CLEANUP_UNCERTAIN
+		proto_block_restart "$interface"
+		return 1
+	}
+	trap '[ -z "$QMI_STATE" ] || : >"$QMI_STATE/cancelled"; exit 1' INT TERM
+	qmi_setup_transaction "$interface"
+	rc=$?
+	if [ "$rc" -ne 0 ] && [ -n "$QMI_STATE" ]; then
+		: >"$QMI_STATE/cancelled"
+		qmi_cleanup_state "$QMI_STATE" || proto_notify_error "$interface" CLEANUP_UNCERTAIN
+	fi
+	trap - INT TERM
+	exec 9>&-
+	return "$rc"
 }
 
 proto_t99w175qmi_teardown() {
-	local interface="$1" device cid_4 pdh_4 cid_6 pdh_6
-
-	device="$(readlink -f /dev/cdc-wdm0 2>/dev/null)"
-	json_load "$(ubus call network.interface."$interface" status 2>/dev/null)"
-	json_select data 2>/dev/null
-	json_get_vars cid_4 pdh_4 cid_6 pdh_6
-
-	[ -c "$device" ] && {
-		qmi_stop_bearer "$device" "$cid_4" "$pdh_4"
-		qmi_stop_bearer "$device" "$cid_6" "$pdh_6"
-	}
-
+	local interface="$1" state
+	case "$interface" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+	state="$(cat "$QMI_ROOT/$interface/current" 2>/dev/null)"
+	case "$state" in "$QMI_ROOT/$interface"/session.*) [ ! -d "$state" ] || : >"$state/cancelled" ;; esac
 	proto_kill_command "$interface"
+	# netifd allows only five seconds here. The private cleanup worker waits
+	# for a cancelled child (at most eight seconds), then releases both CIDs
+	# in parallel. Future setup drains this same state before any allocation.
+	case "$state" in
+		"$QMI_ROOT/$interface"/session.*)
+			/usr/libexec/t99w175-session cleanup "$interface" "$state" </dev/null >/dev/null 2>&1 &
+			;;
+	esac
+	return 0
 }
 
 [ -n "$INCLUDE_ONLY" ] || add_protocol t99w175qmi

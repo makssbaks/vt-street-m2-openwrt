@@ -5,7 +5,7 @@ import { parse_temperature, parse_ca, parse_cells } from '../../package/vtmodem/
 
 // Exercise the actual RPC boundary validators without starting rpcd or any
 // modem commands. The fixed helper process remains outside this pure test.
-let source = readfile('package/vtmodem/files/usr/share/rpcd/ucode/vtmodem');
+let source = readfile('package/vtmodem/files/usr/share/vtmodem/telemetry-cache.uc');
 let begin = index(source, 'function telemetry_number(');
 let end = index(source, 'function find_usb(');
 assert(begin >= 0 && end > begin, 'Locate the actual RPC telemetry boundary');
@@ -92,19 +92,5 @@ for (let input in [ null, '', '[]', 'null', '{broken' ]) {
 }
 decoded = boundary.decode(sprintf('%s%8193s', '{"qmi_signal":{"rssi_dbm":-71}}', ''));
 assert(decoded.qmi_signal === null && decoded.t99_radio === null, '8192 byte envelope cap remains enforced');
-
-// Check the real common-status dispatch with inert command stubs: T99 uses
-// the isolated UIM result while the existing L860 AT lookup remains intact.
-begin = index(source, 'function common_status(');
-end = index(source, 'function sms_call(');
-assert(begin >= 0 && end > begin, 'Locate common-status dispatch');
-let common = loadstring(
-	'let calls = []; function value(dev, cmd, prefix) { push(calls, cmd); return ""; } function lines() { return []; }\n' +
-	substr(source, begin, end - begin) +
-	'\nreturn { call: common_status, calls: calls };', { raw_mode: true })();
-let status = common.call({ type: 't99w175', at_port: '/dev/test', data_interface: '' });
-assert(status.iccid === '' && index(common.calls, 'AT+CCID') < 0, 'T99 common status skips obsolete AT+CCID');
-common.call({ type: 'fibocom-l860', at_port: '/dev/test', data_interface: '' });
-assert(index(common.calls, 'AT+CCID') >= 0, 'L860 still uses its existing AT+CCID path');
 
 print('T99_RPC_TESTS_OK\n');

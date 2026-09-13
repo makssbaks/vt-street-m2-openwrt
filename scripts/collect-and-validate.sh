@@ -5,6 +5,10 @@ OPENWRT_DIR="${1:-$PWD/openwrt}"
 ARTIFACT_DIR="${2:-$PWD/artifacts}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "$ARTIFACT_DIR"
+if [[ -n "$(find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  echo "ERROR: use an empty artifact directory to avoid stale images: $ARTIFACT_DIR" >&2
+  exit 1
+fi
 
 TARGET_DIR="$OPENWRT_DIR/bin/targets/ramips/mt7621"
 if [[ ! -d "$TARGET_DIR" ]]; then
@@ -12,18 +16,19 @@ if [[ ! -d "$TARGET_DIR" ]]; then
   exit 1
 fi
 
-cp -a "$TARGET_DIR"/* "$ARTIFACT_DIR"/ 2>/dev/null || true
 cp "$OPENWRT_DIR/.config" "$ARTIFACT_DIR/openwrt.config"
 (
   cd "$OPENWRT_DIR"
   git rev-parse HEAD
 ) > "$ARTIFACT_DIR/OPENWRT_COMMIT.txt"
 
-SYSUPGRADE="$(find "$TARGET_DIR" -maxdepth 1 -type f -name '*vertell*sysupgrade.bin' -print -quit)"
-if [[ -z "$SYSUPGRADE" ]]; then
-  echo "ERROR: VT-STREET-M2 sysupgrade image was not produced" >&2
+mapfile -t IMAGES < <(find "$TARGET_DIR" -maxdepth 1 -type f \
+  -name '*vertell_vt-mt7621d-squashfs-sysupgrade.bin' -print)
+if (( ${#IMAGES[@]} != 1 )); then
+  echo "ERROR: expected exactly one VT-STREET-M2 squashfs sysupgrade image" >&2
   exit 1
 fi
+SYSUPGRADE="${IMAGES[0]}"
 
 {
   echo '===== VT-STREET-M2 BUILD VALIDATION ====='
@@ -38,66 +43,21 @@ fi
 } | tee "$ARTIFACT_DIR/VALIDATION.txt"
 
 UPGRADE_FILE="$OPENWRT_DIR/target/linux/ramips/mt7621/base-files/lib/upgrade/platform.sh"
-python3 - "$UPGRADE_FILE" <<'PY' | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-s = p.read_text()
-entry = '\tvertell,vt-mt7621d|\\\n'
-start = s.find(entry)
-end = s.find('\n\t\t;;', start)
-print('\n===== SYSUPGRADE ROUTING =====')
-if start < 0 or end < 0:
-    raise SystemExit('ERROR: VT-STREET-M2 missing from platform_do_upgrade')
-block = s[start:end]
-if 'nand_do_upgrade "$1"' not in block:
-    raise SystemExit('ERROR: VT-STREET-M2 does not use nand_do_upgrade')
-print('vertell,vt-mt7621d -> nand_do_upgrade: OK')
-PY
-
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-
-tar -xf "$SYSUPGRADE" -C "$TMP"
-KERNEL="$(find "$TMP" -type f -name kernel -print -quit)"
-if [[ -z "$KERNEL" ]]; then
-  echo "ERROR: kernel member not found inside sysupgrade image" | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
+FWTOOL="$OPENWRT_DIR/staging_dir/host/bin/fwtool"
+if [[ ! -x "$FWTOOL" ]]; then
+  echo 'ERROR: OpenWrt host fwtool is missing' >&2
   exit 1
 fi
-
+# fwtool verifies the appended metadata CRC; do not truncate the original.
+"$FWTOOL" -i "$ARTIFACT_DIR/sysupgrade.metadata.json" "$SYSUPGRADE"
+python3 "$REPO_DIR/scripts/validate-vt-image.py" --image "$SYSUPGRADE" \
+  --metadata "$ARTIFACT_DIR/sysupgrade.metadata.json" --extract-to "$TMP/members" \
+  | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+KERNEL="$TMP/members/kernel"
+ROOTFS="$TMP/members/root"
 cp "$KERNEL" "$ARTIFACT_DIR/vertell-vt-street-m2-kernel.uImage"
-KERNEL_SIZE="$(stat -c '%s' "$KERNEL")"
-
-{
-  echo
-  echo '===== KERNEL ====='
-  echo "Kernel bytes: $KERNEL_SIZE"
-  echo "Kernel partition limit: 4194304"
-} | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
-
-if (( KERNEL_SIZE > 4194304 )); then
-  echo 'ERROR: kernel exceeds 4 MiB partition' | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
-  exit 1
-fi
-
-python3 - "$KERNEL" <<'PY' | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
-from pathlib import Path
-import struct, sys
-p = Path(sys.argv[1])
-b = p.read_bytes()[:64]
-if len(b) != 64:
-    raise SystemExit('ERROR: kernel is shorter than uImage header')
-magic,hcrc,ts,size,load,entry,dcrc,os_,arch,typ,comp,name = struct.unpack('>7I4B32s', b)
-name = name.split(b'\0',1)[0].decode('ascii','replace')
-print(f'uImage magic: 0x{magic:08x}')
-print(f'Payload bytes: {size}')
-print(f'Load address: 0x{load:08x}')
-print(f'Entry point: 0x{entry:08x}')
-print(f'OS/arch/type/comp: {os_}/{arch}/{typ}/{comp}')
-print(f'Name: {name}')
-if magic != 0x27051956:
-    raise SystemExit('ERROR: invalid legacy uImage magic')
-PY
 
 DTB="$(find "$OPENWRT_DIR/build_dir" -type f -name 'image-mt7621_vertell_vt-mt7621d.dtb' -print -quit 2>/dev/null || true)"
 if [[ -n "$DTB" ]]; then
@@ -130,7 +90,6 @@ else
   exit 1
 fi
 
-ROOTFS="$(find "$TMP" -type f -name root -print -quit)"
 UNSQUASHFS="$OPENWRT_DIR/staging_dir/host/bin/unsquashfs4"
 if [[ -z "$ROOTFS" || ! -x "$UNSQUASHFS" ]]; then
   echo 'ERROR: sysupgrade root or OpenWrt unsquashfs4 tool is missing' | tee -a "$ARTIFACT_DIR/VALIDATION.txt" >&2
@@ -141,12 +100,21 @@ fi
 "$UNSQUASHFS" -no-progress -d "$TMP/firmware-root" "$ROOTFS" etc lib usr www
 python3 "$REPO_DIR/scripts/validate-vtmodem-root.py" "$TMP/firmware-root" \
   | tee "$ARTIFACT_DIR/VT_MODEM_FILES.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+python3 "$REPO_DIR/scripts/validate-vt-image.py" \
+  --platform "$TMP/firmware-root/lib/upgrade/platform.sh" \
+  | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+cmp "$UPGRADE_FILE" "$TMP/firmware-root/lib/upgrade/platform.sh"
+python3 "$REPO_DIR/scripts/build-identity.py" --verify "$OPENWRT_DIR" "$TMP/firmware-root"
+cp "$TMP/firmware-root/etc/vt-build.json" "$ARTIFACT_DIR/vt-build.json"
+cp "$OPENWRT_DIR/feeds.conf" "$ARTIFACT_DIR/feeds.conf.lock"
+# Promote the candidate images only after every validation gate has passed.
+cp -a "$TARGET_DIR"/* "$ARTIFACT_DIR"/
 
 {
   echo
   echo '===== RESULT ====='
-  echo 'Basic build checks passed.'
+  echo 'uImage CRC, payload length, MIPS/LZMA/load-entry and sysupgrade metadata validated.'
   echo 'VT-STREET-M2 NAND sysupgrade routing validated.'
   echo 'VT Modem runtime files match the source inside the actual firmware root.'
-  echo 'FLASHING IS NOT YET APPROVED; inspect DTB/MTD and sysupgrade metadata first.'
+  echo 'Build validation passed; hardware boot/recovery testing remains a separate step.'
 } | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
