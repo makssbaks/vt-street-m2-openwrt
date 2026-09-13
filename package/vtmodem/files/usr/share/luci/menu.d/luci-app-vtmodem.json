@@ -20,6 +20,17 @@
       "acl": [ "luci-app-vtmodem" ]
     }
   },
+  "admin/status/vtmodem/radio": {
+    "title": "Radio",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "vtmodem/radio"
+    },
+    "depends": {
+      "acl": [ "luci-app-vtmodem" ]
+    }
+  },
   "admin/status/vtmodem/sms": {
     "title": "SMS",
     "order": 30,

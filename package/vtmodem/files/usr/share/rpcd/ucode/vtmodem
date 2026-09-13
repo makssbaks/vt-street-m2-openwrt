@@ -327,7 +327,47 @@ function sms_call(m, args) {
 	return result;
 }
 
+function radio_call(m, args) {
+	if (!m || m.type != 't99w175')
+		return { ok: false, supported: false, changed: false, verified: false,
+			error: 'Radio controls require a connected T99W175 modem' };
+	let changing = args.action != 'status';
+	if (changing && (args.confirm !== true || type(args.action) != 'string' ||
+		index([ 'mode', 'bands', 'priority', 'lock', 'unlock' ], args.action) < 0 ||
+		type(args.value) != 'string' || length(args.value) > 1024 ||
+		type(args.expected) != 'string' || !length(args.expected) || length(args.expected) > 8192))
+		return { ok: false, supported: true, changed: false, verified: false,
+			error: 'Read current settings and confirm a valid change first' };
+	let fd = popen(`/usr/libexec/vtmodem-radio ${shellquote(m.at_port)} ${shellquote(sprintf('%J', args))} 2>/dev/null`);
+	if (!fd)
+		return { ok: false, supported: true, changed: false, verified: false,
+			error: 'Unable to start radio helper' };
+	let out = fd.read(32769) ?? '';
+	let rc = fd.close();
+	try {
+		if (rc === 0 && length(out) && length(out) <= 32768) {
+			let result = json(out);
+			if (type(result) == 'object' && type(result.ok) == 'bool')
+				return result;
+		}
+	}
+	catch (e) {}
+	return { ok: false, supported: true, changed: changing, verified: false,
+		error: 'Radio helper returned no valid result. Read the settings again before another change.' };
+}
+
 const methods = {
+	radio_status: {
+		call: function() {
+			return radio_call(detect_modem(), { action: 'status' });
+		}
+	},
+	radio_apply: {
+		args: { action: '', value: '', expected: '', confirm: false },
+		call: function(request) {
+			return radio_call(detect_modem(), request.args);
+		}
+	},
 	status: {
 		call: function() {
 			let m = detect_modem();
