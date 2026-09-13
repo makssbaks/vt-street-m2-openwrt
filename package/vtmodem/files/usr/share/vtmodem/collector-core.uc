@@ -12,16 +12,22 @@ function shellquote(s) { return `'${replace(s, "'", "'\\''")}'`; }
 function worker_command(argv, timeout_ms) {
 	let fd = mkstemp();
 	if (!fd) return { ok: false, output: '', exit_code: null };
-	let rc = null, output = '';
+	let rc = null, output = '', captured = false;
 	try {
 		let args = [];
 		for (let arg in argv) push(args, shellquote(arg));
 		rc = system(`LC_ALL=C exec ${join(' ', args)} >/proc/self/fd/${fd.fileno()} 2>/dev/null`, int(timeout_ms));
-		fd.seek(0); output = fd.read(262145) ?? '';
-		if (length(output) > 262144) output = '';
+		if (fd.seek(0)) {
+			let data = fd.read(262145);
+			// Discarded or unreadable output must not masquerade as a
+			// successfully captured empty reply from the modem.
+			if (type(data) == 'string' && length(data) <= 262144) {
+				output = data; captured = true;
+			}
+		}
 	} catch (e) {}
 	fd.close();
-	return { ok: rc === 0, exit_code: rc, output };
+	return { ok: rc === 0 && captured, exit_code: rc, output };
 }
 function field_value(out, prefix) {
 	for (let line in split(out ?? '', '\n')) {
@@ -62,7 +68,12 @@ function specs(modem) {
 		at('iccid', 'AT+CCID', '+CCID:', 300);
 		at('cesq', 'AT+CESQ', '+CESQ:', 30);
 		at('xcesq', 'AT+XCESQ?', '+XCESQ:', 5);
-		at('cell_measurement', 'AT+XMCI=1', '+XMCI:', 30);
+		// L860 can acknowledge XMCI without returning any measurements.
+		// apply_sample only parses successful queries; a fresh empty value
+		// clears old cell text without implying a registration state.
+		at('cell_measurement', 'AT+XMCI=1', '+XMCI:', 30,
+			out => modem.type == 'fibocom-l860' && type(out) == 'string' && !length(trim(out))
+				? '' : field_value(out, '+XMCI:'));
 		at('ca_state', 'AT+XLEC?', '+XLEC:', 30);
 		at('temperature', 'AT+MTSM=1', '+MTSM:', 30);
 		at('data_channel', 'AT+XDATACHANNEL=2', '+XDATACHANNEL:', 30);

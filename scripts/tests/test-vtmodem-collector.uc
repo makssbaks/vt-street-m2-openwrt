@@ -32,6 +32,74 @@ cache.sources.qmi_signal = { monotonic_ms: '1000', updated_at: 100, max_age: 15 
 seen = cached_status_at(cache, m, 20000);
 assert(seen.telemetry.sources.qmi_signal.age_seconds == null && seen.telemetry.sources.qmi_signal.stale, 'String sample timestamp is rejected');
 
+// Exercise the deployed L860 spec through collection and the RPC cache boundary.
+let l860 = { type: 'fibocom-l860', generation: '2-1:3', at_port: '/dev/ttyACM0' };
+let l860_queries = specs(l860);
+let measurement = filter(l860_queries, q => q.name == 'cell_measurement')[0];
+assert(measurement.argv[4] == 'AT+XMCI=1', 'Empty-measurement regression uses the real L860 XMCI query');
+let l860_cache = new_cache(l860, 1000, 100);
+apply_sample(l860_cache, measurement, { ok: true, output: '' }, 2000, 101);
+seen = cached_status_at(l860_cache, l860, 3000);
+assert(seen.cell_measurement === '' && !seen.telemetry.stale &&
+	!seen.telemetry.sources.cell_measurement.stale && seen.telemetry.sources.cell_measurement.error == null,
+	'Successful empty L860 XMCI is a fresh empty sample, including on first collection');
+assert(seen.telemetry.sources.cell_measurement.monotonic_ms == 2000 &&
+	seen.telemetry.sources.cell_measurement.updated_at == 101 && seen.telemetry.sources.cell_measurement.age_seconds == 1,
+	'Empty L860 measurement carries the actual sample time and freshness');
+assert(seen.registration === '' && seen.attached === '', 'Empty XMCI does not infer registration or packet attachment');
+
+for (let empty in [ '', ' \t\r\n  \n' ]) {
+	apply_sample(l860_cache, measurement, { ok: true, output: '+XMCI: 1,2,3\r\n' }, 4000, 103);
+	assert(l860_cache.status.cell_measurement == '1,2,3', 'Recognized XMCI measurement still populates the cell field');
+	l860_cache.status.registration = '0,1';
+	l860_cache.status.attached = '1';
+	apply_sample(l860_cache, measurement, { ok: true, output: empty }, 5000, 104);
+	seen = cached_status_at(l860_cache, l860, 6000);
+	assert(seen.cell_measurement === '' && !seen.telemetry.sources.cell_measurement.stale &&
+		seen.telemetry.sources.cell_measurement.monotonic_ms == 5000,
+		'Successful empty or whitespace XMCI clears the previous cell measurement with a fresh sample');
+	assert(seen.registration == '0,1' && seen.attached == '1', 'Clearing cell measurements leaves independent registration fields unchanged');
+}
+seen = cached_status_at(l860_cache, l860, 96000);
+assert(seen.cell_measurement === '' && seen.telemetry.sources.cell_measurement.stale,
+	'An empty measurement expires at the same age limit as a populated measurement');
+
+for (let bad in [
+	{ ok: true, output: 'unexpected payload', error: 'unrecognized_reply' },
+	{ ok: true, output: 'OK\r\n', error: 'unrecognized_reply' },
+	{ ok: true, output: 'ERROR\r\n', error: 'unrecognized_reply' },
+	{ ok: true, output: null, error: 'unrecognized_reply' },
+	{ ok: false, output: '', error: 'query_failed' },
+	{ ok: false, output: ' \r\n', error: 'query_failed' },
+	{ ok: false, output: '+XMCI: 9,8,7', error: 'query_failed' }
+]) {
+	apply_sample(l860_cache, measurement, { ok: true, output: '+XMCI: 1,2,3' }, 10000, 109);
+	apply_sample(l860_cache, measurement, bad, 11000, 110);
+	seen = cached_status_at(l860_cache, l860, 12000);
+	assert(seen.cell_measurement == '1,2,3' && seen.telemetry.sources.cell_measurement.stale &&
+		seen.telemetry.sources.cell_measurement.error == bad.error && seen.telemetry.sources.cell_measurement.monotonic_ms == 10000,
+		'Nonempty unknown replies, missing output and failed queries preserve a stale prior measurement and explicit error');
+	apply_sample(l860_cache, measurement, { ok: true, output: '' }, 13000, 112);
+	seen = cached_status_at(l860_cache, l860, 14000);
+	assert(seen.cell_measurement === '' && !seen.telemetry.sources.cell_measurement.stale &&
+		seen.telemetry.sources.cell_measurement.error == null, 'A subsequent acknowledged empty XMCI recovers from a prior failure');
+}
+for (let unchanged in [
+	{ modem: l860, name: 'sim_state', output: '+CPIN: READY', value: 'READY' },
+	{ modem: l860, name: 'xcesq', output: '+XCESQ: 1,2,3', value: '1,2,3' },
+	{ modem: m, name: 'sim_state', output: '+CPIN: READY', value: 'READY' },
+	{ modem: { ...l860, type: 'other-modem' }, name: 'cell_measurement', output: '+XMCI: 1,2,3', value: '1,2,3' }
+]) {
+	let unchanged_spec = filter(specs(unchanged.modem), q => q.name == unchanged.name)[0];
+	let unchanged_cache = new_cache(unchanged.modem, 1000, 100);
+	apply_sample(unchanged_cache, unchanged_spec, { ok: true, output: unchanged.output }, 2000, 101);
+	apply_sample(unchanged_cache, unchanged_spec, { ok: true, output: '' }, 3000, 102);
+	seen = cached_status_at(unchanged_cache, unchanged.modem, 4000);
+	assert(seen[unchanged.name] == unchanged.value && seen.telemetry.sources[unchanged.name].stale &&
+		seen.telemetry.sources[unchanged.name].error == 'unrecognized_reply' && seen.telemetry.sources[unchanged.name].monotonic_ms == 2000,
+		'Empty-reply handling remains unchanged for T99, other AT commands and non-L860 modems');
+}
+
 let ticks = 0, calls = [], publishes = [], attempted = {};
 collect_round(new_cache(m, 0, 0), m, qs, attempted,
 	(argv, budget) => { push(calls, { argv, budget }); ticks += budget; return { ok: false, output: '' }; },
@@ -46,6 +114,17 @@ assert(length(immutable) == 4, 'All static identity fields collected');
 for (let q in immutable) assert(q.seconds == 300, 'Static identity is not polled at antenna-mode cadence');
 let reply = worker_command([ '/bin/sh', '-c', 'printf "{\\\"ok\\\":false,\\\"parts_confirmed\\\":1}"; exit 2' ], 1000);
 assert(!reply.ok && json(reply.output).parts_confirmed == 1, 'Structured partial failure survives nonzero worker exit');
+reply = worker_command([ '/bin/sh', '-c', 'exit 0' ], 1000);
+assert(reply.ok && reply.output === '', 'Worker distinguishes a genuinely empty successful reply');
+apply_sample(l860_cache, measurement, reply, 20000, 119);
+assert(!cached_status_at(l860_cache, l860, 21000).telemetry.sources.cell_measurement.stale,
+	'A genuine worker empty success reaches the cache as a fresh empty measurement');
+reply = worker_command([ '/bin/sh', '-c', 'head -c 262145 /dev/zero' ], 1000);
+assert(!reply.ok && reply.exit_code === 0 && reply.output === '', 'Successful child with oversized output is a capture failure, not an empty success');
+apply_sample(l860_cache, measurement, reply, 22000, 121);
+seen = cached_status_at(l860_cache, l860, 23000);
+assert(seen.telemetry.sources.cell_measurement.stale && seen.telemetry.sources.cell_measurement.error == 'query_failed' &&
+	seen.telemetry.sources.cell_measurement.monotonic_ms == 20000, 'Discarded oversized worker output cannot refresh an empty measurement');
 let rpc = readfile('package/vtmodem/files/usr/share/rpcd/ucode/vtmodem');
 assert(index(rpc, 'return cached_status();') >= 0 && index(rpc, 'function command(') < 0 && index(rpc, 'function sms_call(') < 0, 'HTTP status and SMS RPC have no synchronous modem execution path');
 print('VTMODEM_COLLECTOR_TESTS_OK\n');
