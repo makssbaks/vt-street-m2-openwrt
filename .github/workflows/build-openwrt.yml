@@ -3,7 +3,7 @@ name: Build VT-STREET-M2 OpenWrt 25.12
 on:
   workflow_dispatch:
   push:
-    branches: [ main, t99w175-autostart-preflight ]
+    branches: [ main, t99w175-autostart-preflight, fix/firmware-hardening-20260913 ]
     paths:
       - 'port/**'
       - 'config/**'
