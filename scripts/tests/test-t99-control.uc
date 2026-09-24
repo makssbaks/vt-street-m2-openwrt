@@ -23,13 +23,17 @@ let bands = parse_bands(texts['AT^BAND_PREF?']);
 assert(length(bands.LTE.enabled) == 29 && bands.LTE.disabled[0] == 71, 'Actual LTE band state');
 equal(bands.WCDMA.disabled, [], 'Explicit empty disable list remains known empty');
 equal(parse_priority(texts['AT^BAND_PRI?']), [], 'Confirmed priority unset');
+equal(parse_priority(''), [], 'Successful OK-only priority query means unset on GC.004');
+equal(parse_priority('^BAND_PRI:'), [], 'Empty prefixed priority means unset');
+equal(parse_priority('^BAND_PRI: Band priority file does not exist'), [], 'Prefixed missing priority file means unset');
 equal(parse_lock(texts['AT^LTE_LOCK?']), [], 'Confirmed lock unset');
 equal(parse_lock('^LTE_LOCK: (213,1275), (224,550)'), [{ pci: 213, earfcn: 1275 }, { pci: 224, earfcn: 550 }], 'Documented parenthesized lock pairs');
 equal(parse_lock('^LTE_LOCK: ( 213 , 1275 ) , (224, 550)'), [{ pci: 213, earfcn: 1275 }, { pci: 224, earfcn: 550 }], 'Whitespace allowed only around valid pair tokens');
 equal(parse_lock('^LTE_LOCK:0,0,503,262143'), [{ pci: 0, earfcn: 0 }, { pci: 503, earfcn: 262143 }], 'Flat pairs and boundary values');
-for (let parser in [parse_mode, parse_mode_support, parse_supported, parse_bands, parse_priority, parse_lock]) {
+for (let parser in [parse_mode, parse_mode_support, parse_supported, parse_bands, parse_lock]) {
 	assert(parser('ERROR') === null && parser('') === null && parser(null) === null, 'Missing/malformed results never imply empty settings');
 }
+assert(parse_priority('ERROR') === null && parse_priority(null) === null, 'Priority transport/modem errors stay unknown');
 assert(parse_mode('^SLMODE:1,8') === null && parse_mode('^SLMODE:1,2\n^SLMODE:1,3') === null, 'Out-of-range and conflicting mode rejected');
 assert(parse_mode_support('^SLMODE:(0-1),(0-9)') === null, 'Unknown modes not silently enabled');
 assert(parse_supported(replace(texts['AT^SLBAND=?'], 'LTE,(1,2', 'LTE,(1,1')) === null, 'Duplicated capability entries rejected');
@@ -158,16 +162,12 @@ result = transaction(args('bands', '1,3', bands), [
 ]);
 assert(!result.ok && !result.changed, 'Active cell lock blocks band writes');
 let subset = parse_bands(band_text([1]));
-for (let additive in [true, false]) {
-	let initial = parse_bands(band_text([1, 7]));
-	let steps = [
-		['AT^BAND_PREF?', band_text([1, 7])], ['AT^SLBAND=?', texts['AT^SLBAND=?']], ['AT^LTE_LOCK?', texts['AT^LTE_LOCK?']],
-		['AT^BAND_PREF=LTE,2,1,3', ''], ['AT^BAND_PREF?', band_text(additive ? [1, 3, 7] : [1, 3])]
-	];
-	if (additive) { push(steps, ['AT^BAND_PREF=LTE,1,7', '']); push(steps, ['AT^BAND_PREF?', band_text([1, 3])]); }
-	result = transaction(args('bands', '1,3', initial), steps);
-	assert(result.ok && result.verified && !result.restart_required, 'Both possible enable semantics converge only after verified readback without a reboot');
-}
+let initial = parse_bands(band_text([1, 7]));
+result = transaction(args('bands', '1,3', initial), [
+	['AT^BAND_PREF?', band_text([1, 7])], ['AT^SLBAND=?', texts['AT^SLBAND=?']], ['AT^LTE_LOCK?', texts['AT^LTE_LOCK?']],
+	['AT^BAND_PREF=LTE,2,1,3', ''], ['AT^BAND_PREF?', band_text([1, 3])]
+]);
+assert(result.ok && result.verified && !result.restart_required, 'GC.004 operation 2 replaces the LTE enabled set exactly');
 result = transaction(args('bands', '1,3', subset), [
 	['AT^BAND_PREF?', band_text([1])], ['AT^SLBAND=?', texts['AT^SLBAND=?']], ['AT^LTE_LOCK?', texts['AT^LTE_LOCK?']],
 	['AT^BAND_PREF=LTE,2,1,3', ''], ['AT^BAND_PREF?', band_text([1, 3, 7])]

@@ -219,7 +219,9 @@ function saveJob(j, expectedId) {
 function validParts(parts) {
 	return Array.isArray(parts) && parts.length > 0 && parts.every(function(p) {
 		return Number.isInteger(p.id) && p.id >= 0 &&
-			typeof p.fingerprint === 'string' && /^(?:[0-9A-F]{2}){1,512}$/.test(p.fingerprint);
+			typeof p.fingerprint === 'string' && p.fingerprint.length >= 2 &&
+			p.fingerprint.length <= 1024 && p.fingerprint.length % 2 === 0 &&
+			/^[0-9A-F]+$/.test(p.fingerprint);
 	});
 }
 
@@ -375,6 +377,17 @@ return view.extend({
 					return new Promise(function(resolve) { setTimeout(resolve, 2000); })
 						.then(function() { return active === j ? timedStatus(j.id).then(step) : null; });
 				}
+				if (j.resumed === true && r && r.ok === false && r.error_code === 'not_found') {
+					active = null;
+					saveJob(null, j.id);
+					if (j.kind === 'send')
+						lastSend = { phone: null, text: null, uncertain: true };
+					jobBox.replaceChildren(notice('error', _('Результат предыдущей операции больше не хранится после перезапуска или очистки роутера. Операция не повторялась автоматически.')));
+					controls();
+					if (j.kind === 'delete')
+						return refreshInbox();
+					return;
+				}
 				pauseJob(j, _('Результат операции пока неизвестен. ') + text(r && r.error || _('Задание не найдено. Повторная отправка не запускалась.')));
 			}
 			return (initial ? Promise.resolve(initial).then(step) : timedStatus(j.id).then(step))
@@ -523,6 +536,7 @@ return view.extend({
 		if (Array.isArray(data.messages) || data.ok === false)
 			drawInbox(data);
 		if (resumed) {
+			resumed.resumed = true;
 			active = resumed;
 			invalidateInbox();
 			watchJob(resumed);

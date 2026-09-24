@@ -102,8 +102,14 @@ function parse_bands(output) {
 
 function parse_priority(output) {
 	let ls = lines(output);
-	if (ls == null || length(ls) != 1) return null;
-	if (ls[0] == 'Band priority file does not exist') return [];
+	if (ls == null) return null;
+	// GC.004 has been observed to report an unset priority as an OK-only
+	// reply, a bare vendor message, a prefixed vendor message, or an empty
+	// ^BAND_PRI field depending on boot/state. All mean the same empty list.
+	if (!length(ls)) return [];
+	if (length(ls) != 1) return null;
+	if (match(ls[0], /^(\^BAND_PRI: *)?Band priority file does not exist$/) ||
+	    match(ls[0], /^\^BAND_PRI: *$/)) return [];
 	let m = match(ls[0], /^\^BAND_PRI: *([0-9,]+)$/);
 	return m ? numbers(m[1], 1, 256, 15, false) : null;
 }
@@ -227,18 +233,17 @@ function apply_bands(device, desired, before, runner) {
 		return refused('Enabling bands requires a desired list of at most fifteen bands', before);
 	let current = before;
 	if (length(missing)) {
-		// The documentation leaves replacement versus additive enable semantics
-		// ambiguous. Both have fixtures, but are not both observed on this modem.
-		// Send the entire desired set once; accept only those two outcomes.
+		// Hardware verification on T99W175 GC.004 confirmed that operation 2
+		// replaces the complete LTE enabled set; it is not additive. Send the
+		// exact desired set once and require exact readback before proceeding.
 		let reply = runner(['/usr/bin/vt-at', '-t', '10000', device,
 			`AT^BAND_PREF=LTE,2,${join(',', desired)}`], 10500);
 		let after = query(device, 'AT^BAND_PREF?', parse_bands, runner);
 		if (type(reply) != 'object' || reply.ok !== true)
-			return write_failed(after, 'The enable command did not complete cleanly. Settings may have changed; refresh before another action.');
+			return write_failed(after, 'The band replacement command did not complete cleanly. Settings may have changed; refresh before another action.');
 		if (!consistent_bands(after, supported) || !unchanged_other_bands(current, after) ||
-		    (token(after.LTE.enabled) != token(desired) &&
-		     token(after.LTE.enabled) != token(joined_set(current.LTE.enabled, desired))))
-			return write_failed(after, 'Unexpected band readback after enabling. No further commands were sent.');
+		    token(after.LTE.enabled) != token(desired))
+			return write_failed(after, 'Unexpected band readback after replacement. No further commands were sent.');
 		current = after;
 	}
 	let extras = minus(current.LTE.enabled, desired);

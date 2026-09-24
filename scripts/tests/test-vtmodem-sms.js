@@ -324,6 +324,29 @@ const pendingKey = 'vtmodem.sms.pending.v1';
 	assert.equal(resumedDraft.body.value, 'Не удалять');
 	assert.equal(store.size, 0);
 
+	// A reboot clears /var/run job history. A stale browser resume record must
+	// be forgotten without repeating the write; delete resumes refresh inbox.
+	const staleDeleteStore = new Map([[pendingKey, JSON.stringify({ id: id1, kind: 'delete' })]]);
+	h = harness({
+		sms_job_status: () => ({ ok: false, error_code: 'not_found', retry_safe: false, error: 'expired' }),
+		sms_list_start: () => done(empty)
+	}, staleDeleteStore);
+	tree = h.page.render(inbox); await flush();
+	assert.deepEqual(h.calls.map(c => c.method), ['sms_job_status', 'sms_list_start']);
+	assert.equal(staleDeleteStore.size, 0, 'Expired resumed delete is removed from sessionStorage');
+	assert.match(content(tree), /больше не хранится.*не повторялась автоматически/);
+	assert.equal(h.calls.filter(c => c.method === 'sms_delete_start').length, 0);
+
+	const staleSendStore = new Map([[pendingKey, JSON.stringify({ id: id1, kind: 'send' })]]);
+	h = harness({ sms_job_status: () => ({ ok: false, error_code: 'not_found', retry_safe: false, error: 'expired' }) }, staleSendStore);
+	tree = h.page.render(empty); await flush();
+	assert.equal(staleSendStore.size, 0, 'Expired resumed send is removed from sessionStorage');
+	assert.equal(button(tree, 'Отправить SMS').disabled, false);
+	compose(tree, 'После перезагрузки');
+	h.confirm(false);
+	await button(tree, 'Отправить SMS').attrs.click();
+	assert.equal(h.calls.filter(c => c.method === 'sms_send_start').length, 0, 'Unknown old send requires explicit retry confirmation');
+
 	// A late result from an old view must not erase a newer view's resume ID.
 	h = harness({ sms_send_start: () => running, sms_job_status: () => done(success) });
 	tree = h.page.render(empty); compose(tree);

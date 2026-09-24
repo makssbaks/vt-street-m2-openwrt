@@ -31,7 +31,9 @@ function validate_request(kind, args) {
 	let seen = {};
 	for (let m in args.messages) {
 		if (type(m) != 'object' || type(m.id) != 'int' || m.id < 0 || m.id > 65535 ||
-			type(m.fingerprint) != 'string' || !match(m.fingerprint, /^([0-9A-F]{2}){1,512}$/) || seen[m.id])
+			type(m.fingerprint) != 'string' || length(m.fingerprint) < 2 ||
+			length(m.fingerprint) > 1024 || length(m.fingerprint) % 2 != 0 ||
+			!match(m.fingerprint, /^[0-9A-F]+$/) || seen[m.id])
 			return 'Invalid or duplicated message identity; refresh the inbox';
 		seen[m.id] = true;
 	}

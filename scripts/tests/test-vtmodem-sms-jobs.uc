@@ -11,8 +11,13 @@ assert(validate_request('send', { request_id: id, phone: '+123', text: 'a' + chr
 assert(validate_request('send', { request_id: id, phone: '+123', text: sprintf('%16384s', '') }) != null, 'Text bound matches C byte buffer limit');
 let parts = [ { id: 5, fingerprint: '0011AB' }, { id: 6, fingerprint: 'FF22' } ];
 assert(validate_request('delete', { request_id: id, messages: parts }) == null, 'Delete binds ids to exact PDU fingerprints');
+assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: 'AA' } ] }) == null, 'One-byte PDU fingerprint is valid');
+let max_fingerprint = '';
+for (let n = 0; n < 512; n++) max_fingerprint += 'AA';
+assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: max_fingerprint } ] }) == null, 'Maximum 512-byte fingerprint is valid');
+for (let bad in [ '', 'A', 'AAA', 'aa', 'AAZZ', max_fingerprint + 'AA' ])
+	assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: bad } ] }) != null, 'Malformed fingerprint rejected without unsupported regexp syntax');
 assert(validate_request('delete', { request_id: id, messages: [ parts[0], parts[0] ] }) != null, 'Duplicate indexes rejected');
-assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: '' } ] }) != null, 'Unsafe id-only deletes rejected');
 let m = { type: 't99w175', generation: '1-1:4', at_port: '/dev/t99w175-at' };
 let job = { id, kind: 'send', state: 'queued', generation: m.generation, args: { phone: '+12345', text: 'test' } };
 let calls = [];
