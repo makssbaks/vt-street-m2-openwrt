@@ -1,0 +1,5 @@
+/etc/vtmodem/vnstat.conf
+/etc/vtmodem/traffic/interfaces
+/etc/vtmodem/traffic/current
+/etc/vtmodem/traffic-backup.db
+/etc/vtmodem/traffic-backup.time

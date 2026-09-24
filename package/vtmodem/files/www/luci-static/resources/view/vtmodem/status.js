@@ -1,12 +1,21 @@
 'use strict';
 'require view';
 'require rpc';
+'require vtmodem.connection as connection';
 
 var callStatus = rpc.declare({
 	object: 'vtmodem',
 	method: 'status',
 	expect: {},
 	reject: true
+});
+
+var callTraffic = rpc.declare({
+	object: 'vtmodem', method: 'traffic_status', expect: {}, reject: true
+});
+
+var callConfirmTime = rpc.declare({
+	object: 'vtmodem', method: 'traffic_confirm_time', params: [ 'timestamp' ], expect: {}, reject: true
 });
 
 function text(v) {
@@ -325,6 +334,8 @@ function renderStatus(s) {
 	var radio = E('table', { 'class': 'table' }, radioRows);
 
 	var modem = E('table', { 'class': 'table' }, [
+		row(_('Версия VT Modem'), record(s.build).vtmodem_version),
+		row(_('Исходники сборки'), record(s.build).source_commit, true),
 		row(_('Производитель'), s.manufacturer),
 		row(_('Модель'), s.model),
 		row(_('Прошивка модема'), s.firmware, true),
@@ -456,7 +467,7 @@ function createRefreshController(options) {
 		},
 		refresh: refresh,
 		setInterval: function(value) {
-			if (stopped || [ 0, 10000, 30000, 60000 ].indexOf(value) === -1)
+			if (stopped || [ 0, 5000, 10000, 30000, 60000 ].indexOf(value) === -1)
 				return false;
 			interval = value;
 			notify();
@@ -545,6 +556,236 @@ function bindRefreshLifecycle(root, controller, doc, page, Observer) {
 	return dispose;
 }
 
+// Counter arithmetic uses decimal strings so 64-bit counters are not rounded
+// before subtraction. Number conversion is limited to the small interval delta.
+function byteString(value) {
+	if (typeof value !== 'string' || !/^[0-9]{1,20}$/.test(value))
+		return null;
+	value = value.replace(/^0+(?=\d)/, '');
+	return value.length === 20 && value > '18446744073709551615' ? null : value;
+}
+
+function subtractBytes(after, before) {
+	after = byteString(after); before = byteString(before);
+	if (after === null || before === null || after.length < before.length ||
+		(after.length === before.length && after < before))
+		return null;
+	var out = '', borrow = 0;
+	for (var i = after.length - 1, j = before.length - 1; i >= 0; i--, j--) {
+		var digit = Number(after[i]) - (j >= 0 ? Number(before[j]) : 0) - borrow;
+		borrow = digit < 0 ? 1 : 0;
+		out = String(digit + borrow * 10) + out;
+	}
+	return out.replace(/^0+(?=\d)/, '');
+}
+
+function gigabytes(value) {
+	var digits = typeof value === 'string' && /^[0-9]{1,24}$/.test(value) ? value.replace(/^0+(?=\d)/, '') : null;
+	if (digits === null)
+		return '-';
+	while (digits.length < 10) digits = '0' + digits;
+	return digits.slice(0, -9) + '.' + digits.slice(-9, -6) + ' ' + _('ГБ');
+}
+
+function trafficRate(previous, current) {
+	previous = record(previous); current = record(current);
+	var a = record(previous.live), b = record(current.live);
+	var elapsed = b.monotonic_ms - a.monotonic_ms;
+	if (!previous.interface || previous.interface !== current.interface || !a.boot_id ||
+		a.boot_id !== b.boot_id || a.ifindex !== b.ifindex || !Number.isFinite(elapsed) ||
+		elapsed <= 0 || elapsed > 30000)
+		return null;
+	var rx = subtractBytes(b.rx_bytes, a.rx_bytes), tx = subtractBytes(b.tx_bytes, a.tx_bytes);
+	if (rx === null || tx === null || Number(rx) > Number.MAX_SAFE_INTEGER || Number(tx) > Number.MAX_SAFE_INTEGER)
+		return null;
+	return { rx_mbps: Number(rx) * 8 / elapsed / 1000, tx_mbps: Number(tx) * 8 / elapsed / 1000 };
+}
+
+function renderTraffic(data, rate, confirmTime) {
+	data = record(data);
+	var labels = [ _('Период'), _('Принято'), _('Передано'), _('Всего') ];
+	var period = record(data.period);
+	var periods = [ [ _('Сегодня') + (period.day ? ' · ' + period.day : ''), data.today ], [ _('Этот месяц') + (period.month ? ' · ' + period.month : ''), data.month ],
+		[ _('За весь период учёта'), data.total ] ];
+	var rows = periods.map(function(period) {
+		var counters = record(period[1]);
+		return E('tr', { 'class': 'tr' }, [ period[0], gigabytes(counters.rx_bytes),
+			gigabytes(counters.tx_bytes), gigabytes(counters.total_bytes) ].map(function(value, index) {
+			return E('td', { 'class': 'td', 'data-title': labels[index] }, [ value ]);
+		}));
+	});
+	return E('div', {}, [
+		grid([ card(_('Скорость приёма'), measurement(rate && rate.rx_mbps, _('Мбит/с'))),
+			card(_('Скорость передачи'), measurement(rate && rate.tx_mbps, _('Мбит/с'))),
+			card(_('Принято интерфейсом'), gigabytes(record(data.live).rx_bytes), _('С момента создания интерфейса')),
+			card(_('Передано интерфейсом'), gigabytes(record(data.live).tx_bytes), _('С момента создания интерфейса')) ]),
+		E('table', { 'class': 'table' }, [ E('tr', { 'class': 'tr table-titles' },
+			labels.map(function(label) { return E('th', { 'class': 'th', 'scope': 'col' }, [ label ]); })) ].concat(rows)),
+		E('p', { 'style': 'opacity:.75' }, [ _('Интерфейс: '), text(data.interface), '. ',
+			_('1 ГБ = 1 000 000 000 байт. Даты — по времени роутера. История обновляется после сохранения счётчиков, до 10 минут; текущая скорость — каждые 5 секунд. Учёт оператора может отличаться.') ]),
+		data.accounting_since ? E('p', {}, [ _('Начало учёта: '), new Date(data.accounting_since * 1000).toLocaleString() ]) : '',
+		data.updated_at ? E('p', {}, [ _('Последнее сохранение статистики: '), new Date(data.updated_at * 1000).toLocaleString() ]) : '',
+		data.clock_synced === false ? E('div', { 'class': 'alert-message warning' }, [
+			E('p', {}, [ _('История начнёт записываться после синхронизации или подтверждения времени. Трафик до этого момента в историю не попадёт. Текущие счётчики интерфейса доступны выше.') ]),
+			E('p', {}, [ _('Время роутера: '), Number.isFinite(data.router_time) ? new Date(data.router_time * 1000).toLocaleString() : '-', '. ',
+				_('Проверьте дату и время. Если они неверны, исправьте их в '),
+				E('a', { 'href': '/cgi-bin/luci/admin/system/system' }, [ _('настройках системы') ]), '.' ]),
+			confirmTime ? E('button', { 'class': 'btn', 'type': 'button', 'click': confirmTime }, [ _('Время верное — начать учёт') ]) : ''
+		]) : '',
+		data.stale ? E('p', { 'class': 'alert-message warning' }, [ _('История трафика давно не обновлялась. Показаны последние сохранённые значения.') ]) : '',
+		data.ok === false ? E('p', { 'class': 'alert-message warning' }, [
+			_('История трафика пока недоступна.') ]) : ''
+	]);
+}
+
+function sourceInfo(status, name) {
+	return record(record(record(status).telemetry).sources)[name] || {};
+}
+
+function telemetryMessage(status) {
+	var telemetry = record(record(status).telemetry);
+	if (!Object.keys(telemetry).length)
+		return '';
+	if (telemetry.busy === 'sms')
+		return _('Выполняется операция SMS. Измерения сигнала временно приостановлены.');
+	var sources = record(telemetry.sources);
+	if (telemetry.stale || telemetry.error || Object.keys(sources).some(function(name) { return sources[name].stale || sources[name].error; }))
+		return _('Часть измерений устарела или недоступна. Показаны последние полученные значения.');
+	var signal = sourceInfo(status, 'qmi_signal');
+	return typeof signal.age_seconds === 'number'
+		? _('Возраст измерения сигнала: ') + Math.max(0, Math.floor(signal.age_seconds)) + ' ' + _('с') : '';
+}
+
+function alignmentSample(status, elapsedSeconds) {
+	elapsedSeconds = elapsedSeconds === undefined ? 0 : Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : Infinity;
+	function fresh(source) {
+		return !source.stale && !source.error && Number.isFinite(source.monotonic_ms) &&
+			Number.isFinite(source.age_seconds) && source.age_seconds + elapsedSeconds <= 15;
+	}
+	status = record(status);
+	if (status.type !== 't99w175' || !status.present) return null;
+	var cell = record(status.t99_radio);
+	var main = (Array.isArray(cell.cells) ? cell.cells : []).filter(function(item) { return item.role === 'primary'; })[0] || {};
+	var source = sourceInfo(status, 't99_radio');
+	var signal = { rsrp_dbm: main.rsrp_dbm, rsrq_db: main.rsrq_db, snr_db: main.snr_db };
+	var identity = [ cell.cell_id, main.band, main.earfcn, main.pci ];
+	// Prefer one DEBUG response for both serving-cell identity and measurements;
+	// a cached RF-band response must not label a newer QMI sample from another cell.
+	var coherent = fresh(source) &&
+		[ signal.rsrp_dbm, signal.rsrq_db, signal.snr_db ].every(Number.isFinite);
+	if (!coherent) {
+		source = sourceInfo(status, 'qmi_signal');
+		signal = record(status.qmi_signal);
+		identity = [];
+	}
+	if (!fresh(source) || source.monotonic_ms < 0 ||
+		![ signal.rsrp_dbm, signal.rsrq_db, signal.snr_db ].every(Number.isFinite)) return null;
+	var cellKey = identity.length && identity.every(Number.isFinite) ? identity.join('/') : null;
+	return { stamp: source.monotonic_ms, at: Number(source.updated_at) * 1000,
+		rsrp: signal.rsrp_dbm, rsrq: signal.rsrq_db, snr: signal.snr_db,
+		cell: cellKey, label: cellKey ? bandName(main.band) + ' · EARFCN ' + main.earfcn +
+			' · PCI ' + main.pci + ' · ' + _('Сота ') + cell.cell_id : _('Сота уточняется') };
+}
+
+function pushAlignment(samples, sample) {
+	if (!sample || (samples.length && sample.stamp === samples[samples.length - 1].stamp))
+		return false;
+	if (samples.length && sample.stamp < samples[samples.length - 1].stamp)
+		samples.splice(0); // Collector/boot monotonic epoch changed.
+	samples.push(sample);
+	while (samples.length > 120 || (samples.length && sample.stamp - samples[0].stamp > 600000))
+		samples.shift();
+	return true;
+}
+
+function alignmentSnapshot(samples, label) {
+	var last = samples[samples.length - 1];
+	if (!last || !last.cell)
+		return null;
+	var windowSamples = [];
+	for (var i = samples.length - 1; i >= 0 && windowSamples.length < 6; i--) {
+		if (samples[i].cell !== last.cell || last.stamp - samples[i].stamp > 30000 ||
+			(i < samples.length - 1 && samples[i + 1].stamp - samples[i].stamp > 12000))
+			break;
+		windowSamples.unshift(samples[i]);
+	}
+	if (windowSamples.length < 2)
+		return null;
+	function median(key) {
+		var values = windowSamples.map(function(item) { return item[key]; }).sort(function(a, b) { return a - b; });
+		var mid = Math.floor(values.length / 2);
+		return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+	}
+	return { label: String(label || '').trim().slice(0, 60) || _('Замер'), cell: last.cell,
+		cell_label: last.label, at: last.at, count: windowSamples.length,
+		rsrp: median('rsrp'), rsrq: median('rsrq'), snr: median('snr') };
+}
+
+function readSnapshots(storage) {
+	try {
+		var text = storage.getItem('vtmodem.antenna.samples.v1');
+		if (!text || text.length > 12000) return [];
+		var data = JSON.parse(text);
+		return Array.isArray(data) ? data.slice(-6).filter(function(item) {
+			return item && typeof item.label === 'string' && item.label.length <= 60 &&
+				typeof item.cell === 'string' && item.cell.length < 100 &&
+				typeof item.cell_label === 'string' && item.cell_label.length < 180 &&
+				[ item.rsrp, item.rsrq, item.snr, item.at, item.count ].every(Number.isFinite);
+		}) : [];
+	}
+	catch (error) { return []; }
+}
+
+function signalGraph(samples, key, title, unit) {
+	if (samples.length < 2)
+		return E('div', {}, [ E('strong', {}, [ title ]), E('p', {}, [ _('Ожидание новых измерений…') ]) ]);
+	var values = samples.map(function(item) { return item[key]; });
+	var low = Math.floor(Math.min.apply(null, values) - 1), high = Math.ceil(Math.max.apply(null, values) + 1);
+	var begin = samples[0].stamp, span = Math.max(1, samples[samples.length - 1].stamp - begin);
+	function node(tag, attrs, value) {
+		var element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+		Object.keys(attrs || {}).forEach(function(name) { element.setAttribute(name, attrs[name]); });
+		if (value !== undefined) element.textContent = value;
+		return element;
+	}
+	var svg = node('svg', { viewBox: '0 0 360 130', role: 'img', 'aria-label': title + ' (' + unit + ')',
+		style: 'display:block;width:100%;height:auto;color:inherit' });
+	[ low, (low + high) / 2, high ].forEach(function(value) {
+		var y = 100 - (value - low) / (high - low) * 85;
+		svg.appendChild(node('line', { x1: 38, y1: y, x2: 352, y2: y, stroke: 'currentColor', 'stroke-opacity': '.15' }));
+		svg.appendChild(node('text', { x: 34, y: y + 4, 'text-anchor': 'end', fill: 'currentColor', 'font-size': 10 },
+			String(Number(value.toFixed(1)))));
+	});
+	var segments = [], segment = [];
+	samples.forEach(function(sample, index) {
+		if (index && (sample.cell !== samples[index - 1].cell || sample.stamp - samples[index - 1].stamp > 12000)) {
+			segments.push(segment); segment = [];
+		}
+		segment.push((38 + (sample.stamp - begin) / span * 314).toFixed(1) + ',' +
+			(100 - (sample[key] - low) / (high - low) * 85).toFixed(1));
+	});
+	segments.push(segment);
+	segments.forEach(function(points) {
+		svg.appendChild(node('polyline', { points: points.join(' '), fill: 'none', stroke: '#35b8d3',
+			'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+	});
+	svg.appendChild(node('text', { x: 38, y: 123, fill: 'currentColor', 'font-size': 10 }, '-' + Math.round(span / 1000) + ' ' + _('с')));
+	svg.appendChild(node('text', { x: 352, y: 123, fill: 'currentColor', 'font-size': 10, 'text-anchor': 'end' }, _('Сейчас')));
+	return E('div', {}, [ E('strong', {}, [ title + ' · ' + unit ]), svg ]);
+}
+
+function renderSnapshots(snapshots) {
+	var labels = [ _('Замер'), _('Сота'), 'RSRP', 'RSRQ', 'SNR' ];
+	return E('table', { 'class': 'table' }, [ E('tr', { 'class': 'tr table-titles' }, labels.map(function(label) {
+		return E('th', { 'class': 'th', 'scope': 'col' }, [ label ]);
+	})) ].concat(snapshots.map(function(sample) {
+		return E('tr', { 'class': 'tr' }, [ sample.label + ' (' + sample.count + ')', sample.cell_label,
+			measurement(sample.rsrp, 'dBm'), measurement(sample.rsrq, 'dB'), measurement(sample.snr, 'dB')
+		].map(function(value, index) { return E('td', { 'class': 'td', 'data-title': labels[index] }, [ value ]); }));
+	})));
+}
+
+
 return view.extend({
 	load: function() {
 		return Promise.resolve().then(callStatus).then(function(value) {
@@ -555,15 +796,94 @@ return view.extend({
 	},
 
 	render: function(initial) {
+		var connectionPanel = connection.create();
 		var content = E('div');
+		var telemetryNotice = E('p', { 'role': 'status', 'style': 'opacity:.8' });
+		var trafficContent = E('div', {}, [ _('Статистика загружается…') ]);
+		var trafficNotice = E('p', { 'role': 'status' });
+		var lastTraffic = null, renderedTraffic = null;
+		var samples = [], snapshots = [], alignmentEnabled = false, normalInterval = 30000;
+		try { snapshots = readSnapshots(window.localStorage); } catch (error) { /* Storage is optional. */ }
+		var alignmentContent = E('div');
+		var snapshotContent = E('div', {}, [ renderSnapshots(snapshots) ]);
+		var alignmentNotice = E('p', { 'role': 'status' });
+		var snapshotName = E('input', { 'type': 'text', 'maxlength': '60', 'placeholder': _('Название положения антенны'),
+			'aria-label': _('Название замера'), 'style': 'max-width:360px;width:100%' });
+		var saveSample = E('button', { 'type': 'button', 'class': 'btn', 'click': function() {
+			var saved = alignmentSnapshot(samples, snapshotName.value);
+			if (!alignmentEnabled || !saved || !currentAlignment(controller.state()) || controller.state().error)
+				return;
+			snapshots.push(saved); snapshots = snapshots.slice(-6);
+			replaceContent(snapshotContent, renderSnapshots(snapshots));
+			try {
+				window.localStorage.setItem('vtmodem.antenna.samples.v1', JSON.stringify(snapshots));
+				alignmentNotice.textContent = _('Замер сохранён в этом браузере.');
+			}
+			catch (error) { alignmentNotice.textContent = _('Замер сохранён до закрытия страницы.'); }
+		} }, [ _('Сохранить замер') ]);
+		var alignButton = E('button', { 'type': 'button', 'class': 'btn cbi-button-action', 'click': function() {
+			alignmentEnabled = !alignmentEnabled;
+			if (alignmentEnabled) {
+				normalInterval = controller.state().interval;
+				samples = [];
+				setPeriod(5000);
+				controller.refresh();
+			}
+			else setPeriod(normalInterval);
+			alignButton.textContent = alignmentEnabled ? _('Завершить наведение') : _('Начать наведение');
+			autoSelect.disabled = alignmentEnabled;
+			showAlignment(controller.state());
+		} }, [ _('Начать наведение') ]);
+		function replaceContent(node, child) {
+			while (node.firstChild) node.removeChild(node.firstChild);
+			node.appendChild(child);
+		}
+		function confirmTime(event) {
+			var button = event.currentTarget;
+			button.disabled = true;
+			return callConfirmTime(Math.floor(Date.now() / 1000)).then(function(result) {
+				if (!result || result.ok !== true) throw new Error(_('Время роутера отличается от времени браузера. Проверьте часы в настройках системы.'));
+				return trafficController.refresh();
+			}).catch(function(error) {
+				trafficNotice.className = 'alert-message warning';
+				trafficNotice.textContent = errorText(error);
+			}).then(function() { button.disabled = false; });
+		}
+		function currentAlignment(state) {
+			return alignmentSample(state.status, typeof state.lastSuccess === 'number' ? (Date.now() - state.lastSuccess) / 1000 : Infinity);
+		}
+		function setPeriod(value) {
+			controller.setInterval(value);
+			trafficController.setInterval(value === 0 ? 0 : 5000);
+			if (!value && lastTraffic) { replaceContent(trafficContent, renderTraffic(lastTraffic, null, confirmTime)); lastTraffic = null; }
+		}
+		function showAlignment(state) {
+			var sample = currentAlignment(state);
+			if (alignmentEnabled && !state.error) pushAlignment(samples, sample);
+			saveSample.disabled = !alignmentEnabled || !!state.error || !sample || !alignmentSnapshot(samples, '');
+			if (!alignmentEnabled) {
+				replaceContent(alignmentContent, E('p', {}, [ _('Во время наведения измерения отображаются каждые 5 секунд. Графики и замеры помогают сравнить положения антенны.') ]));
+				return;
+			}
+			replaceContent(alignmentContent, E('div', {}, [
+				E('p', {}, [ sample ? sample.label : _('Ожидание свежих измерений сигнала…') ]),
+				grid([ card('RSRP', measurement(sample && sample.rsrp, 'dBm')), card('RSRQ', measurement(sample && sample.rsrq, 'dB')),
+					card('SNR', measurement(sample && sample.snr, 'dB')) ]),
+				grid([ signalGraph(samples, 'rsrp', 'RSRP', 'dBm'), signalGraph(samples, 'rsrq', 'RSRQ', 'dB'),
+					signalGraph(samples, 'snr', 'SNR', 'dB') ])
+			]));
+		}
 		var message = E('div', { 'role': 'status', 'aria-live': 'polite',
 			'style': 'margin:10px 0' });
 		var updated = E('span', { 'style': 'opacity:.8' });
 		var refreshButton = E('button', { 'class': 'btn cbi-button-action',
-			'type': 'button', 'click': function() { return controller.refresh(); } }, [ _('Обновить') ]);
+			'type': 'button', 'click': function() {
+				return Promise.all([ controller.refresh(), trafficController.refresh() ]).then(function(results) { return results[0]; });
+			} }, [ _('Обновить') ]);
 		var autoSelect = E('select', { 'style': 'width:auto', 'aria-label': _('Автообновление'),
-			'change': function(event) { controller.setInterval(Number(event.target.value)); } }, [
+			'change': function(event) { setPeriod(Number(event.target.value)); } }, [
 			E('option', { 'value': '0' }, [ _('Выключено') ]),
+			E('option', { 'value': '5000' }, [ _('Каждые 5 секунд') ]),
 			E('option', { 'value': '10000' }, [ _('Каждые 10 секунд') ]),
 			E('option', { 'value': '30000', 'selected': 'selected' }, [ _('Каждые 30 секунд') ]),
 			E('option', { 'value': '60000' }, [ _('Каждые 60 секунд') ])
@@ -575,11 +895,18 @@ return view.extend({
 			]),
 			E('div', { 'style': 'display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0' }, [
 				E('label', {}, [ _('Автообновление'), ' ', autoSelect ]), refreshButton, updated
-			]), message, content
+			]), message, telemetryNotice, connectionPanel.node, content,
+			E('div', { 'class': 'cbi-section' }, [ E('h3', {}, [ _('Трафик модема') ]), trafficNotice, trafficContent ]),
+			E('div', { 'class': 'cbi-section' }, [ E('h3', {}, [ _('Наведение антенны') ]), alignButton, alignmentContent,
+				E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:10px;align-items:center' }, [ snapshotName, saveSample ]),
+				alignmentNotice, snapshotContent,
+				E('p', { 'style': 'opacity:.75' }, [ _('Замер — медиана до 6 последних измерений одной соты. При смене соты или паузе линия графика прерывается. Сохранённые замеры остаются в этом браузере.') ])
+			])
 		]);
 		var renderedStatus;
 
 		function showState(state) {
+			connectionPanel.update(state.status);
 			refreshButton.disabled = state.busy;
 			refreshButton.textContent = state.busy ? _('Обновление…') : _('Обновить');
 			autoSelect.value = String(state.interval);
@@ -590,6 +917,8 @@ return view.extend({
 			message.textContent = state.error
 				? _('Не удалось обновить данные. ') + (state.status
 					? _('Показаны последние полученные значения. ') : '') + state.error : '';
+			telemetryNotice.textContent = telemetryMessage(state.status);
+			showAlignment(state);
 			if (renderedStatus !== state.status) {
 				while (content.firstChild)
 					content.removeChild(content.firstChild);
@@ -608,8 +937,43 @@ return view.extend({
 			isHidden: function() { return document.hidden; },
 			onState: showState
 		});
+		var trafficController = createRefreshController({
+			query: function() {
+				return callTraffic().then(function(value) {
+					if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.ok !== 'boolean')
+						throw new Error(_('Получен некорректный ответ счётчика трафика.'));
+					return { present: true, traffic: value };
+				});
+			},
+			now: function() { return Date.now(); },
+			setTimer: function(fn, delay) { return window.setTimeout(fn, delay); },
+			clearTimer: function(id) { window.clearTimeout(id); },
+			isHidden: function() { return document.hidden; },
+			onState: function(state) {
+				trafficNotice.className = state.error ? 'alert-message warning' : '';
+				trafficNotice.textContent = state.error ? _('Не удалось обновить счётчик. Показаны предыдущие значения; текущая скорость недоступна.') : '';
+				if (state.error && lastTraffic) {
+					replaceContent(trafficContent, renderTraffic(lastTraffic, null, confirmTime));
+					lastTraffic = null;
+				}
+				if (state.status && state.status !== renderedTraffic) {
+					var data = state.status.traffic;
+					replaceContent(trafficContent, renderTraffic(data, trafficRate(lastTraffic, data), confirmTime));
+					lastTraffic = data; renderedTraffic = state.status;
+				}
+			}
+		});
+		trafficController.setInterval(5000);
 		showState(controller.state());
-		bindRefreshLifecycle(root, controller, document, window, MutationObserver);
+		// One page lifecycle suspends both independent request streams.
+		var combined = {};
+		[ 'start', 'stop', 'suspend', 'resume', 'visibilityChanged' ].forEach(function(method) {
+			combined[method] = function() {
+				controller[method](); trafficController[method]();
+				if (connectionPanel[method]) connectionPanel[method]();
+			};
+		});
+		bindRefreshLifecycle(root, combined, document, window, MutationObserver);
 		return root;
 	},
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 
 TAG="t99w175-hotplug"
-LOCKDIR="/tmp/t99w175-hotplug.lock"
+LOCKFILE="/tmp/t99w175-hotplug.lock"
 READYFILE="/tmp/t99w175-hotplug.ready"
 
 log()
@@ -21,7 +21,7 @@ find_modem()
 		[ -f "$d/idProduct" ] || continue
 		[ "$(cat "$d/idVendor" 2>/dev/null)" = "05c6" ] || continue
 		[ "$(cat "$d/idProduct" 2>/dev/null)" = "9025" ] || continue
-		echo "$d"
+		readlink -f "$d"
 		return 0
 	done
 	return 1
@@ -52,7 +52,7 @@ ensure_dynamic_id()
 unbind_adb()
 {
 	dev="$1"
-	for i in "$dev":*; do
+	for i in "$dev"/"${dev##*/}":*; do
 		[ -d "$i" ] || continue
 		subclass="$(cat "$i/bInterfaceSubClass" 2>/dev/null)"
 		proto="$(cat "$i/bInterfaceProtocol" 2>/dev/null)"
@@ -71,7 +71,7 @@ unbind_adb()
 adb_is_bound()
 {
 	dev="$1"
-	for i in "$dev":*; do
+	for i in "$dev"/"${dev##*/}":*; do
 		[ -d "$i" ] || continue
 		[ "$(cat "$i/bInterfaceSubClass" 2>/dev/null)" = "42" ] || continue
 		[ "$(cat "$i/bInterfaceProtocol" 2>/dev/null)" = "01" ] || continue
@@ -88,6 +88,7 @@ find_tty_by_protocol()
 		tty="$(basename "$t")"
 		path="$(readlink -f "$t/device" 2>/dev/null)"
 		[ -n "$path" ] || continue
+		case "$path" in "$MODEM"/*) ;; *) continue ;; esac
 		iface="$(dirname "$path")"
 		[ "$(cat "$iface/bInterfaceProtocol" 2>/dev/null)" = "$wanted" ] || continue
 		echo "/dev/$tty"
@@ -117,19 +118,48 @@ ready_state()
 	[ -c "$AT" ] || return 1
 	[ -c /dev/cdc-wdm0 ] || return 1
 	[ -e /sys/class/net/wwan0 ] || return 1
+	local qmi
+	qmi="$(readlink -f /sys/class/usbmisc/cdc-wdm0/device 2>/dev/null)"
+	case "$qmi" in "$dev"/*) ;; *) return 1 ;; esac
+	[ "$(readlink -f /sys/class/net/wwan0/device 2>/dev/null)" = "$qmi" ] || return 1
 
 	T="$(basename "$AT")"
 	P="$(readlink -f "/sys/class/tty/$T/device" 2>/dev/null)"
 	[ -n "$P" ] || return 1
+	case "$P" in "$dev"/*) ;; *) return 1 ;; esac
 	I="$(dirname "$P")"
 	[ "$(cat "$I/bInterfaceProtocol" 2>/dev/null)" = "40" ] || return 1
 	adb_is_bound "$dev" && return 1
 	return 0
 }
 
+find_firewall_zone()
+{
+	local section="$1" name networks
+	config_get name "$section" name
+	config_get networks "$section" network
+	[ "$name" != wan ] || wan_section="$section"
+	case " $networks " in *" modem "*) already_assigned=1 ;; esac
+}
+
+assign_initial_firewall_zone()
+{
+	local wan_section already_assigned=0
+	. /lib/functions.sh
+	config_load firewall
+	config_foreach find_firewall_zone zone
+	# config_foreach covers named and anonymous sections. Never add a second
+	# zone if a pre-existing firewall configuration already assigns modem.
+	[ "$already_assigned" = 0 ] && [ -n "$wan_section" ] || return 0
+	uci -q add_list "firewall.$wan_section.network=modem" || return 1
+	uci -q commit firewall || return 1
+	firewall_changed=1
+	log 'added new modem interface to firewall wan zone'
+}
+
 ensure_network_config()
 {
-	local network_changed=0 firewall_changed=0 wan_idx nets
+	local network_changed=0 firewall_changed=0
 
 	if ! uci -q get network.modem >/dev/null 2>&1; then
 		uci -q set network.modem='interface'
@@ -140,21 +170,7 @@ ensure_network_config()
 		uci -q commit network
 		network_changed=1
 		log "created default network.modem (T99W175 QMI, APN internet, IPv4)"
-	fi
-
-	wan_idx="$(uci -q show firewall 2>/dev/null | \
-		sed -n "s/^firewall\.@zone\[\([0-9][0-9]*\)\]\.name='wan'$/\1/p" | head -n1)"
-	if [ -n "$wan_idx" ]; then
-		nets="$(uci -q get "firewall.@zone[$wan_idx].network" 2>/dev/null)"
-		case " $nets " in
-			*" modem "*) ;;
-			*)
-				uci -q add_list "firewall.@zone[$wan_idx].network=modem"
-				uci -q commit firewall
-				firewall_changed=1
-				log "added modem to firewall wan zone"
-				;;
-		esac
+		assign_initial_firewall_zone || log 'ERROR: initial firewall assignment failed'
 	fi
 
 	if [ "$network_changed" -eq 1 ]; then
@@ -167,22 +183,30 @@ ensure_network_config()
 	# Run on every ready event, including unchanged configuration and
 	# subsequent boots. The helper serializes itself and respects UP,
 	# PENDING, auto=0 and a manual disconnect. It never invokes ifup.
-	/usr/libexec/t99w175-net-ready </dev/null >/dev/null 2>&1 &
+	/usr/libexec/t99w175-net-ready 8>&- </dev/null >/dev/null 2>&1 &
+}
+
+modem_unavailable()
+{
+	rm -f "$READYFILE"
+	remove_aliases
+	[ "$(uci -q get network.modem.proto)" = t99w175qmi ] || return 0
+	# Availability does not alter netifd's runtime autostart/manual Stop flag.
+	ubus -t 3 call network.interface notify_proto \
+		'{"interface":"modem","action":5,"available":false}' >/dev/null 2>&1 || true
 }
 
 main()
 {
+	# A kernel lock cannot be left stale after an interrupted hotplug script.
+	umask 077
+	exec 8>>"$LOCKFILE" || return 1
+	flock -n 8 || return 0
 	MODEM="$(find_modem)"
 	if [ -z "$MODEM" ]; then
-		rm -f "$READYFILE"
-		remove_aliases
+		modem_unavailable
 		exit 0
 	fi
-
-	# Serialize configuration creation even on the already-ready path.
-	mkdir "$LOCKDIR" 2>/dev/null || exit 0
-	trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
-	trap 'exit 1' INT TERM
 
 	if [ -f "$READYFILE" ] && ready_state "$MODEM"; then
 		ensure_network_config
@@ -191,8 +215,7 @@ main()
 
 	MODEM="$(find_modem)"
 	[ -n "$MODEM" ] || {
-		rm -f "$READYFILE"
-		remove_aliases
+		modem_unavailable
 		exit 0
 	}
 
@@ -231,9 +254,9 @@ main()
 	fi
 
 	rm -f "$READYFILE"
+	modem_unavailable
 	log "ERROR: T99W175 USB reconciliation incomplete"
 	return 1
 }
 
-main
-exit $?
+[ -n "$INCLUDE_ONLY" ] || { main; exit $?; }
