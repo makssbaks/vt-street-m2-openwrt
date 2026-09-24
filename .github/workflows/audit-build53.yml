@@ -1,0 +1,64 @@
+name: Audit build 53 binary runtime
+on:
+  workflow_dispatch:
+  push:
+    branches: [ fix/firmware-hardening-20260913 ]
+    paths: [ '.github/workflows/audit-build53.yml' ]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8f3882f0ea7148ea21aed5575d7ecc1f2d971140
+          persist-credentials: false
+      - name: Install isolated inspection tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends squashfs-tools qemu-user-static device-tree-compiler
+      - name: Download exact completed firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/audit" "$RUNNER_TEMP/export"
+          gh api repos/makssbaks/vt-street-m2-openwrt/actions/artifacts/10814450444/zip > "$RUNNER_TEMP/audit/build53.zip"
+          echo 'b7bd56e46313520c65cd53f128e97a757ffa71dc0f2c48f5ae3a75f400ee5033  build53.zip' > "$RUNNER_TEMP/audit/SHA256SUMS"
+          cd "$RUNNER_TEMP/audit"
+          sha256sum -c SHA256SUMS | tee "$RUNNER_TEMP/export/integrity.txt"
+          unzip -q build53.zip
+          img=artifacts/openwrt-ramips-mt7621-vertell_vt-mt7621d-squashfs-sysupgrade.bin
+          echo "2dcd96f6226a85ee56417a50defa8232abe296847a852455230e93c7d905b150  $img" | sha256sum -c - | tee -a "$RUNNER_TEMP/export/integrity.txt"
+          tar xOf "$img" sysupgrade-vertell_vt-mt7621d/root > root.squashfs
+          unsquashfs -d rootfs root.squashfs > "$RUNNER_TEMP/export/squashfs.txt"
+      - name: Export immutable source and extracted root
+        run: |
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/export/source53.tar.gz"
+          tar -C "$RUNNER_TEMP/audit/rootfs" -czf "$RUNNER_TEMP/export/rootfs53.tar.gz" .
+          mkdir "$RUNNER_TEMP/audit/tools"
+          cp /usr/bin/qemu-mipsel-static /usr/bin/unsquashfs /usr/bin/dtc "$RUNNER_TEMP/audit/tools/"
+          tar -C "$RUNNER_TEMP/audit/tools" -czf "$RUNNER_TEMP/export/audit-tools.tar.gz" .
+          git rev-parse HEAD > "$RUNNER_TEMP/export/source-commit.txt"
+      - name: Exercise actual MIPS musl validators without modem hardware
+        run: |
+          set -o pipefail
+          root="$RUNNER_TEMP/audit/rootfs"
+          cp /usr/bin/qemu-mipsel-static "$root/qemu"
+          cp -a package scripts "$root/"
+          status=0
+          for test in test-t99-control.uc test-vtmodem-sms-jobs.uc test-t99-control-rpc.uc; do
+            echo "=== MIPS/musl $test ===" | tee -a "$RUNNER_TEMP/export/binary-tests.txt"
+            timeout --kill-after=5s 60s sudo chroot "$root" /qemu /usr/bin/ucode "/scripts/tests/$test" 2>&1 | tee -a "$RUNNER_TEMP/export/binary-tests.txt" || status=1
+          done
+          exit "$status"
+      - name: Upload audit evidence and source (no Git credentials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vt-audit-build53
+          path: ${{ runner.temp }}/export/*
+          if-no-files-found: error
+          retention-days: 7
