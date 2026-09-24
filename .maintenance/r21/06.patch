@@ -1,0 +1,114 @@
+diff --git a/scripts/tests/test-vtmodem-status-refresh.js b/scripts/tests/test-vtmodem-status-refresh.js
+index a925e78..bd7c944 100644
+--- a/scripts/tests/test-vtmodem-status-refresh.js
++++ b/scripts/tests/test-vtmodem-status-refresh.js
+@@ -285,10 +285,10 @@ async function viewTests() {
+ 	const time = clock(), doc = eventTarget(), pageWindow = eventTarget(), Observer = observerType(), queries = [];
+ 	doc.hidden = false; doc.documentElement = {};
+ 	pageWindow.setTimeout = time.setTimer; pageWindow.clearTimeout = time.clearTimer;
+-	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', source)(
++	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'connection', source)(
+ 		{ extend: value => value },
+ 		{ declare: options => options.method === 'traffic_status' ? () => Promise.resolve({ ok: true }) : () => { const query = deferred(); queries.push(query); return query.promise; } },
+-		value => value, element, doc, pageWindow, Observer);
++		value => value, element, doc, pageWindow, Observer, { create: () => ({ node: element('div'), update: () => {}, stop: () => {}, suspend: () => {}, resume: () => {} }) });
+ 	let loaded = page.load(); await flush();
+ 	queries[0].reject(new Error('first RPC failed'));
+ 	const initial = await loaded;
+diff --git a/scripts/tests/test-vtmodem-status-view.js b/scripts/tests/test-vtmodem-status-view.js
+index 5c5d0c3..67387e8 100644
+--- a/scripts/tests/test-vtmodem-status-view.js
++++ b/scripts/tests/test-vtmodem-status-view.js
+@@ -94,13 +94,16 @@ function harness(automatic = {}) {
+ 		constructor(...args) { super(...(args.length ? args : [now])); }
+ 		static now() { return now; }
+ 	}
+-	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'Date', source)(
++	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'Date', 'connection', source)(
+ 		{ extend: value => value }, { declare: ({ method }) => (...args) => {
+ 			const q = { ...deferred(), method, args, at: now };
+ 			queries.push(q);
+ 			if (automatic[method]) Promise.resolve().then(() => automatic[method](now, ...args)).then(q.resolve, q.reject);
+ 			return q.promise;
+-		} }, value => value, element, doc, browser, Observer, FakeDate);
++		} }, value => value, element, doc, browser, Observer, FakeDate, { create: () => ({
++			node: element('div', {class: 'vt-connection-test'}), update: () => {},
++			stop: () => {}, suspend: () => {}, resume: () => {}
++		}) });
+ 	const root = page.render({ status: status(now), completedAt: now });
+ 	return { root, page, queries, timers, doc, browser, storage, automatic,
+ 		now: () => now,
+diff --git a/scripts/validate-vt-runtime.py b/scripts/validate-vt-runtime.py
+new file mode 100755
+index 0000000..eeaa90a
+--- /dev/null
++++ b/scripts/validate-vt-runtime.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python3
++"""Runtime inventory and ELF dependency closure for the extracted firmware root."""
++import argparse
++from pathlib import Path
++import os
++import re
++import struct
++import subprocess
++
++REQUIRED = [
++    'bin/ubus', 'bin/busybox', 'sbin/netifd', 'sbin/procd', 'sbin/logd',
++    'usr/bin/qmicli', 'usr/libexec/qmi-proxy', 'usr/bin/ucode', 'usr/lib/ucode/fs.so',
++    'usr/lib/rpcd/ucode.so', 'usr/bin/vt-at.real', 'usr/bin/vt-sms.real',
++    'usr/libexec/vtmodem-connection', 'usr/share/vtmodem/connection-worker.uc',
++    'etc/uci-defaults/21-vt-services',
++]
++FORBIDDEN = ['sbin/uqmi', 'lib/netifd/proto/qmi.sh', 'lib/netifd/proto/wwan.sh',
++             'usr/sbin/wpad', 'usr/sbin/hostapd']
++
++
++def resolved(root: Path, path: Path) -> Path:
++    """Resolve target absolute links inside root, never against the host filesystem."""
++    for _ in range(20):
++        if not path.is_symlink():
++            return path
++        dest = Path(path.readlink())
++        path = root / str(dest).lstrip('/') if dest.is_absolute() else path.parent / dest
++    raise ValueError(f'Symlink loop: {path}')
++
++
++def validate(root: Path, elf_only: bool = False) -> tuple[int, int]:
++    for rel in [] if elf_only else REQUIRED:
++        if not resolved(root, root / rel).is_file():
++            raise ValueError(f'Missing required runtime file: {rel}')
++    # netifd may retain a harmless wifi stub; only competing clients/daemons are forbidden.
++    for rel in [] if elf_only else FORBIDDEN:
++        if (root / rel).exists() or (root / rel).is_symlink():
++            raise ValueError(f'Unused/conflicting client remains: {rel}')
++    elf_count = deps = 0
++    for path in root.rglob('*'):
++        if path.is_symlink() or not path.is_file():
++            continue
++        with path.open('rb') as stream:
++            header = stream.read(52)
++        if not header.startswith(b'\x7fELF'):
++            continue
++        if len(header) < 52 or header[:7] != b'\x7fELF\x01\x01\x01' or struct.unpack_from('<H', header, 18)[0] != 8:
++            raise ValueError(f'Unexpected executable architecture: {path.relative_to(root)}')
++        elf_count += 1
++        out = subprocess.run(['readelf', '-dW', str(path)], capture_output=True,
++                             text=True, check=True, timeout=10,
++                             env={**os.environ, 'LC_ALL': 'C'}).stdout
++        for name in re.findall(r'\(NEEDED\).*?\[([^\]]+)\]', out):
++            if not re.fullmatch(r'[A-Za-z0-9_.+\-]+', name):
++                raise ValueError(f'Unexpected library reference: {name}')
++            if not any(resolved(root, root / directory / name).is_file() for directory in ['lib', 'usr/lib']):
++                raise ValueError(f'{path.relative_to(root)} needs missing library {name}')
++            deps += 1
++    return elf_count, deps
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('root', type=Path)
++    parser.add_argument('--elf-only', action='store_true', help='Audit older roots without the new inventory policy')
++    args = parser.parse_args()
++    count, dependencies = validate(args.root.resolve(), args.elf_only)
++    print(f'VT_RUNTIME_OK: {count} MIPS ELF files; {dependencies} library references resolved; ELF dependency closure checked')
