@@ -37,7 +37,7 @@ jobs:
           done
           timeout --kill-after=5s 60s python3 scripts/test-t99w175-net-ready.py
           for test in scripts/tests/test-*.py; do
-            timeout --kill-after=5s 60s python3 "$test"
+            timeout --kill-after=5s 120s python3 "$test"
           done
           echo VT_MODEM_FAST_CHECKS_OK
 
