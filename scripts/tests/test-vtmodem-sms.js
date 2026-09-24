@@ -218,7 +218,7 @@ const pendingKey = 'vtmodem.sms.pending.v1';
 	await staleDelete.attrs.click();
 	assert.equal(h.calls.length, 2, 'A detached stale DOM handler must remain invalid after a refresh');
 
-	for (const malformed of [undefined, '', 'aa11', 'GG', 'A', 'AA'.repeat(513)]) {
+	for (const malformed of [undefined, '', 'AA', 'aa11', 'GG', 'A', 'AA'.repeat(513)]) {
 		h = harness();
 		tree = h.page.render({ ...empty, messages: [{ id: 1, text: 'old backend', fingerprint: malformed }] });
 		assert.equal(button(tree, 'Удалить').disabled, true);

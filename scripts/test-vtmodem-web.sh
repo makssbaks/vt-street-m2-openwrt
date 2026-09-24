@@ -33,7 +33,8 @@ for VT_TEST in \
   test-vtmodem-dashboard.js \
   test-vtmodem-status-view.js \
   test-vtmodem-sms.js \
-  test-vtmodem-radio-controls.js; do
+  test-vtmodem-radio-controls.js \
+  test-vtmodem-connection.js; do
   printf 'Running %s\n' "$VT_TEST"
   timeout --kill-after=5s 30s node "scripts/tests/$VT_TEST"
 done
@@ -49,7 +50,8 @@ for VT_TEST in \
   test-t99-control-rpc.uc \
   test-vtmodem-collector.uc \
   test-vtmodem-sms-jobs.uc \
-  test-vtmodem-traffic.uc; do
+  test-vtmodem-traffic.uc \
+  test-vtmodem-connection.uc; do
   printf 'Running %s\n' "$VT_TEST"
   timeout --kill-after=5s 30s "$UCODE_BIN" -L "$UCODE_LIB/*.so" "scripts/tests/$VT_TEST"
 done
@@ -65,9 +67,11 @@ for VT_TEST in \
   scripts/tests/test-build-workflow.py \
   scripts/tests/test-vt-mac.py \
   scripts/tests/test-vnstat-flush-patch.py \
-  scripts/tests/test-vt-traffic-service.py; do
+  scripts/tests/test-vt-traffic-service.py \
+  scripts/tests/test-vt-stability.py \
+  scripts/tests/test-vt-runtime.py; do
   printf 'Running %s\n' "$VT_TEST"
-  timeout --kill-after=5s 60s python3 "$VT_TEST"
+  timeout --kill-after=5s 120s python3 "$VT_TEST"
 done
 
 VT_SQLITE_ARGS=()

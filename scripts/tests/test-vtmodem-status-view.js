@@ -94,13 +94,16 @@ function harness(automatic = {}) {
 		constructor(...args) { super(...(args.length ? args : [now])); }
 		static now() { return now; }
 	}
-	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'Date', source)(
+	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'Date', 'connection', source)(
 		{ extend: value => value }, { declare: ({ method }) => (...args) => {
 			const q = { ...deferred(), method, args, at: now };
 			queries.push(q);
 			if (automatic[method]) Promise.resolve().then(() => automatic[method](now, ...args)).then(q.resolve, q.reject);
 			return q.promise;
-		} }, value => value, element, doc, browser, Observer, FakeDate);
+		} }, value => value, element, doc, browser, Observer, FakeDate, { create: () => ({
+			node: element('div', {class: 'vt-connection-test'}), update: () => {},
+			stop: () => {}, suspend: () => {}, resume: () => {}
+		}) });
 	const root = page.render({ status: status(now), completedAt: now });
 	return { root, page, queries, timers, doc, browser, storage, automatic,
 		now: () => now,

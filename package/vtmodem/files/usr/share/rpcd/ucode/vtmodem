@@ -36,7 +36,28 @@ function radio_call(m, args) {
 }
 
 
+function connection_call(args) {
+	if (type(args) != 'object' || index(['status', 'connect', 'disconnect', 'reconnect'], args.action) < 0 ||
+		(args.action != 'status' && (args.confirm !== true || type(args.expected) != 'string' ||
+		 !length(args.expected) || length(args.expected) > 4096 || type(args.request_id) != 'string' ||
+		 !match(args.request_id, /^[0-9a-f]{32}$/))))
+		return { ok: false, accepted: false, error: 'Invalid or unconfirmed connection action' };
+	let fd = popen(`/usr/libexec/vtmodem-connection ${shellquote(sprintf('%J', args))} 2>/dev/null`);
+	if (!fd) return { ok: false, accepted: false, error: 'Unable to start connection helper' };
+	let out = fd.read(16385) ?? '';
+	let rc = fd.close();
+	try {
+		let r = length(out) <= 16384 ? json(out) : null;
+		if (rc === 0 && type(r) == 'object' && type(r.ok) == 'bool') return r;
+	} catch (e) {}
+	return { ok: false, accepted: null, outcome_unknown: true,
+		error: 'No valid connection result; inspect state without repeating the action' };
+}
+
 const methods = {
+	connection_status: { call: function() { return connection_call({ action: 'status' }); } },
+	connection_action: { args: { action: '', expected: '', request_id: '', confirm: false },
+		call: function(request) { return connection_call(request.args); } },
 	status: { call: function() { return cached_status(); } },
 	traffic_status: { call: function() { return traffic_status(); } },
 	traffic_confirm_time: { args: { timestamp: 0 },

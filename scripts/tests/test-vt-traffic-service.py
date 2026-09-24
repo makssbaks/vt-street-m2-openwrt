@@ -19,6 +19,15 @@ with tempfile.TemporaryDirectory(prefix='vt-traffic-service-test-') as work:
     log = work / 'calls'
     env = dict(os.environ, VT_TEST_LOG=str(log))
 
+    def calls_text():
+        return log.read_text() if log.exists() else ''
+
+    def wait_for(predicate, why, timeout=4):
+        deadline = time.monotonic() + timeout
+        while not predicate() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert predicate(), why
+
     def remap(source):
         return (source.replace('/var/run/vtmodem-traffic', str(state))
                 .replace('/etc/vtmodem', str(data))
@@ -73,7 +82,10 @@ with tempfile.TemporaryDirectory(prefix='vt-traffic-service-test-') as work:
     daemon.write_text(remap((files / 'usr/libexec/vtmodem-traffic-daemon').read_text()))
     proc = subprocess.Popen(['sh', str(daemon)], env=env)
     try:
-        time.sleep(0.2)
+        deadline = time.monotonic() + 4
+        while not log.exists() and proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert log.exists(), f'Supervisor did not restore history: exit={proc.poll()}'
         assert log.read_text().strip() == 'snapshot restore', 'Restore history but do not start accounting before time confirmation'
         subprocess.run([str(client)], env=env, check=True, timeout=2)
         # Manual verified time is an alternative to NTP, without changing clock.
@@ -82,9 +94,10 @@ with tempfile.TemporaryDirectory(prefix='vt-traffic-service-test-') as work:
         while not (state / 'daemon-ready').exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert (state / 'daemon-ready').exists()
-        time.sleep(0.1)
+        wait_for(lambda: '--nodaemon' in calls_text(), 'Native accounting process did not start')
         result = subprocess.run([str(client)], env=env, capture_output=True, timeout=8)
         assert result.returncode == 0, result.stderr
+        wait_for(lambda: calls_text().count('--nodaemon') >= 2, 'Accounting process did not resume after backup')
         calls = log.read_text()
         assert calls.index('FLUSHED') < calls.rindex('snapshot backup'), 'Confirm RAM flush before coherent snapshot'
         assert calls.count('--nodaemon') >= 2, 'Accounting daemon resumes after backup'
@@ -97,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix='vt-traffic-service-test-') as work:
         try:
             pending = subprocess.Popen([str(client)], env=dict(env, PATH=str(commands) + ':' + env['PATH']),
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            time.sleep(0.25)
+            wait_for(lambda: (state / 'backup-request').exists() or pending.poll() is not None, 'Backup client did not publish its request')
             assert pending.poll() is None, 'Stale matching success cannot complete a new backup'
         finally:
             os.kill(proc.pid, signal.SIGCONT)
@@ -134,7 +147,7 @@ with tempfile.TemporaryDirectory(prefix='vt-traffic-service-test-') as work:
             time.sleep(0.05)
         assert (state / 'daemon-ready').exists(), (proc.poll(), log.read_text(), [x.name for x in state.iterdir()])
         orphan = int((state / 'daemon-child').read_text())
-        time.sleep(0.1)
+        wait_for(lambda: calls_text().count('--nodaemon') > calls.count('--nodaemon'), 'Orphan fixture writer did not start')
         proc.kill()
         proc.wait(timeout=2)
         count = log.read_text().count('--nodaemon')

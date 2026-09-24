@@ -97,7 +97,7 @@ if [[ -z "$ROOTFS" || ! -x "$UNSQUASHFS" ]]; then
 fi
 # The package lives under these paths. Avoid unrelated device nodes in /dev
 # when extracting as an unprivileged CI user.
-"$UNSQUASHFS" -no-progress -d "$TMP/firmware-root" "$ROOTFS" etc lib usr www
+"$UNSQUASHFS" -no-progress -d "$TMP/firmware-root" "$ROOTFS" bin sbin etc lib usr www
 python3 "$REPO_DIR/scripts/validate-vtmodem-root.py" "$TMP/firmware-root" \
   | tee "$ARTIFACT_DIR/VT_MODEM_FILES.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 python3 "$REPO_DIR/scripts/validate-vt-image.py" \
@@ -107,6 +107,10 @@ cmp "$UPGRADE_FILE" "$TMP/firmware-root/lib/upgrade/platform.sh"
 python3 "$REPO_DIR/scripts/build-identity.py" --verify "$OPENWRT_DIR" "$TMP/firmware-root"
 cp "$TMP/firmware-root/etc/vt-build.json" "$ARTIFACT_DIR/vt-build.json"
 cp "$OPENWRT_DIR/feeds.conf" "$ARTIFACT_DIR/feeds.conf.lock"
+python3 "$REPO_DIR/scripts/validate-vt-runtime.py" "$TMP/firmware-root" \
+  | tee "$ARTIFACT_DIR/VT_RUNTIME.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
+bash "$REPO_DIR/scripts/test-vtmodem-target.sh" "$TMP/firmware-root" \
+  | tee "$ARTIFACT_DIR/TARGET_TESTS.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 # Promote the candidate images only after every validation gate has passed.
 cp -a "$TARGET_DIR"/* "$ARTIFACT_DIR"/
 

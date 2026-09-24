@@ -8,7 +8,8 @@
           "traffic_status",
           "sms_list_start",
           "sms_job_status",
-          "radio_status"
+          "radio_status",
+          "connection_status"
         ]
       }
     },
@@ -18,7 +19,8 @@
           "sms_send_start",
           "sms_delete_start",
           "radio_apply",
-          "traffic_confirm_time"
+          "traffic_confirm_time",
+          "connection_action"
         ]
       }
     }

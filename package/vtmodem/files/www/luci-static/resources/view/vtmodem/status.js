@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require rpc';
+'require vtmodem.connection as connection';
 
 var callStatus = rpc.declare({
 	object: 'vtmodem',
@@ -795,6 +796,7 @@ return view.extend({
 	},
 
 	render: function(initial) {
+		var connectionPanel = connection.create();
 		var content = E('div');
 		var telemetryNotice = E('p', { 'role': 'status', 'style': 'opacity:.8' });
 		var trafficContent = E('div', {}, [ _('Статистика загружается…') ]);
@@ -893,7 +895,7 @@ return view.extend({
 			]),
 			E('div', { 'style': 'display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0' }, [
 				E('label', {}, [ _('Автообновление'), ' ', autoSelect ]), refreshButton, updated
-			]), message, telemetryNotice, content,
+			]), message, telemetryNotice, connectionPanel.node, content,
 			E('div', { 'class': 'cbi-section' }, [ E('h3', {}, [ _('Трафик модема') ]), trafficNotice, trafficContent ]),
 			E('div', { 'class': 'cbi-section' }, [ E('h3', {}, [ _('Наведение антенны') ]), alignButton, alignmentContent,
 				E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:10px;align-items:center' }, [ snapshotName, saveSample ]),
@@ -904,6 +906,7 @@ return view.extend({
 		var renderedStatus;
 
 		function showState(state) {
+			connectionPanel.update(state.status);
 			refreshButton.disabled = state.busy;
 			refreshButton.textContent = state.busy ? _('Обновление…') : _('Обновить');
 			autoSelect.value = String(state.interval);
@@ -965,7 +968,10 @@ return view.extend({
 		// One page lifecycle suspends both independent request streams.
 		var combined = {};
 		[ 'start', 'stop', 'suspend', 'resume', 'visibilityChanged' ].forEach(function(method) {
-			combined[method] = function() { controller[method](); trafficController[method](); };
+			combined[method] = function() {
+				controller[method](); trafficController[method]();
+				if (connectionPanel[method]) connectionPanel[method]();
+			};
 		});
 		bindRefreshLifecycle(root, combined, document, window, MutationObserver);
 		return root;

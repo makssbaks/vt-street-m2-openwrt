@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=20
+PKG_RELEASE:=21
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -9,7 +9,7 @@ define Package/vtmodem
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=VT-STREET-M2 modem backend and LuCI interface
-  DEPENDS:=+flock +jsonfilter +luci-base +rpcd +qmi-utils +ucode +ucode-mod-fs +vnstat2 +libsqlite3 +kmod-usb-acm +kmod-usb-net-cdc-ncm +kmod-usb-net-qmi-wwan +kmod-usb-serial-option
+  DEPENDS:=+flock +jsonfilter +luci-base +rpcd +rpcd-mod-ucode +qmi-utils +ucode +ucode-mod-fs +vnstat2 +libsqlite3 +kmod-usb-acm +kmod-usb-net-cdc-ncm +kmod-usb-net-qmi-wwan +kmod-usb-serial-option
 endef
 
 define Package/vtmodem/description
@@ -69,6 +69,7 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/20-vt-mac \
 		$(1)/etc/uci-defaults/20-vt-mac
+	$(INSTALL_BIN) ./files/etc/uci-defaults/21-vt-services $(1)/etc/uci-defaults/21-vt-services
 
 	$(INSTALL_DIR) $(1)/lib/netifd/proto
 	$(INSTALL_BIN) ./files/lib/netifd/proto/t99w175qmi.sh \
@@ -92,6 +93,9 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/protocol
 	$(INSTALL_DATA) ./files/www/luci-static/resources/protocol/t99w175qmi.js \
 		$(1)/www/luci-static/resources/protocol/t99w175qmi.js
+
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/vtmodem
+	$(INSTALL_DATA) ./files/www/luci-static/resources/vtmodem/connection.js $(1)/www/luci-static/resources/vtmodem/connection.js
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/vtmodem
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/vtmodem/radio.js $(1)/www/luci-static/resources/view/vtmodem/radio.js

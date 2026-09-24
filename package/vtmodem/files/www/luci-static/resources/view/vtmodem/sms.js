@@ -217,9 +217,9 @@ function saveJob(j, expectedId) {
 }
 
 function validParts(parts) {
-	return Array.isArray(parts) && parts.length > 0 && parts.every(function(p) {
-		return Number.isInteger(p.id) && p.id >= 0 &&
-			typeof p.fingerprint === 'string' && p.fingerprint.length >= 2 &&
+	return Array.isArray(parts) && parts.length > 0 && parts.length <= 64 && parts.every(function(p) {
+		return p && Number.isInteger(p.id) && p.id >= 0 && p.id <= 65535 &&
+			typeof p.fingerprint === 'string' && p.fingerprint.length >= 4 &&
 			p.fingerprint.length <= 1024 && p.fingerprint.length % 2 === 0 &&
 			/^[0-9A-F]+$/.test(p.fingerprint);
 	});

@@ -11,7 +11,7 @@ assert(validate_request('send', { request_id: id, phone: '+123', text: 'a' + chr
 assert(validate_request('send', { request_id: id, phone: '+123', text: sprintf('%16384s', '') }) != null, 'Text bound matches C byte buffer limit');
 let parts = [ { id: 5, fingerprint: '0011AB' }, { id: 6, fingerprint: 'FF22' } ];
 assert(validate_request('delete', { request_id: id, messages: parts }) == null, 'Delete binds ids to exact PDU fingerprints');
-assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: 'AA' } ] }) == null, 'One-byte PDU fingerprint is valid');
+assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: 'AA' } ] }) != null, 'One-byte fingerprint rejected like the C helper');
 let max_fingerprint = '';
 for (let n = 0; n < 512; n++) max_fingerprint += 'AA';
 assert(validate_request('delete', { request_id: id, messages: [ { id: 5, fingerprint: max_fingerprint } ] }) == null, 'Maximum 512-byte fingerprint is valid');
