@@ -39,7 +39,8 @@ assert(parse_mode_support('^SLMODE:(0-1),(0-9)') === null, 'Unknown modes not si
 assert(parse_supported(replace(texts['AT^SLBAND=?'], 'LTE,(1,2', 'LTE,(1,1')) === null, 'Duplicated capability entries rejected');
 assert(parse_bands(replace(texts['AT^BAND_PREF?'], 'LTE,Disable Bands:71,', 'LTE,Disable Bands:1,71,')) === null, 'Contradictory enabled/disabled state rejected');
 assert(parse_bands(replace(texts['AT^BAND_PREF?'], 'WCDMA,Disable Bands:', 'WCDMA,Enable Bands:')) === null, 'Missing/duplicate band section rejected');
-assert(parse_priority('^BAND_PRI:1,1') === null && parse_priority('^BAND_PRI:') === null, 'Malformed priority is not unset');
+assert(parse_priority('^BAND_PRI:1,1') === null, 'Duplicated priority remains malformed');
+equal(parse_priority('^BAND_PRI:'), [], 'Empty priority field is confirmed unset');
 for (let raw in ['^LTE_LOCK:', '^LTE_LOCK: (213,1275),garbage', '^LTE_LOCK:504,1', '^LTE_LOCK:1,262144', '^LTE_LOCK:1,2,1,2'])
 	assert(parse_lock(raw) === null, 'Malformed, duplicate, or out-of-range lock rejected');
 
