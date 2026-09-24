@@ -19,12 +19,15 @@ jobs:
       - name: Install isolated inspection tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends squashfs-tools qemu-user-static device-tree-compiler
+          sudo apt-get install -y --no-install-recommends squashfs-tools qemu-user-static device-tree-compiler libjson-c-dev cmake build-essential
+          mkdir -p "$RUNNER_TEMP/audit" "$RUNNER_TEMP/export"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/export/source53.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/export/source-commit.txt"
       - name: Download exact completed firmware
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/audit" "$RUNNER_TEMP/export"
+          set -o pipefail
           gh api repos/makssbaks/vt-street-m2-openwrt/actions/artifacts/10814450444/zip > "$RUNNER_TEMP/audit/build53.zip"
           echo 'b7bd56e46313520c65cd53f128e97a757ffa71dc0f2c48f5ae3a75f400ee5033  build53.zip' > "$RUNNER_TEMP/audit/SHA256SUMS"
           cd "$RUNNER_TEMP/audit"
@@ -33,21 +36,29 @@ jobs:
           img=artifacts/openwrt-ramips-mt7621-vertell_vt-mt7621d-squashfs-sysupgrade.bin
           echo "2dcd96f6226a85ee56417a50defa8232abe296847a852455230e93c7d905b150  $img" | sha256sum -c - | tee -a "$RUNNER_TEMP/export/integrity.txt"
           tar xOf "$img" sysupgrade-vertell_vt-mt7621d/root > root.squashfs
-          unsquashfs -d rootfs root.squashfs > "$RUNNER_TEMP/export/squashfs.txt"
-      - name: Export immutable source and extracted root
+          sudo unsquashfs -d rootfs root.squashfs > "$RUNNER_TEMP/export/squashfs.txt"
+      - name: Export extracted root and offline tools
         run: |
-          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/export/source53.tar.gz"
-          tar -C "$RUNNER_TEMP/audit/rootfs" -czf "$RUNNER_TEMP/export/rootfs53.tar.gz" .
+          sudo tar -C "$RUNNER_TEMP/audit/rootfs" -czf "$RUNNER_TEMP/export/rootfs53.tar.gz" .
           mkdir "$RUNNER_TEMP/audit/tools"
           cp /usr/bin/qemu-mipsel-static /usr/bin/unsquashfs /usr/bin/dtc "$RUNNER_TEMP/audit/tools/"
           tar -C "$RUNNER_TEMP/audit/tools" -czf "$RUNNER_TEMP/export/audit-tools.tar.gz" .
-          git rev-parse HEAD > "$RUNNER_TEMP/export/source-commit.txt"
+      - name: Export pinned upstream host ucode for additional fixture tests
+        continue-on-error: true
+        run: |
+          git clone -q https://github.com/jow-/ucode.git "$RUNNER_TEMP/ucode"
+          git -C "$RUNNER_TEMP/ucode" checkout --detach 85922056
+          cmake -S "$RUNNER_TEMP/ucode" -B "$RUNNER_TEMP/ucode/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/ucode-host"
+          cmake --build "$RUNNER_TEMP/ucode/build" -j2
+          cmake --install "$RUNNER_TEMP/ucode/build"
+          tar -C "$RUNNER_TEMP/ucode-host" -czf "$RUNNER_TEMP/export/ucode-host.tar.gz" .
+          git -C "$RUNNER_TEMP/ucode" rev-parse HEAD > "$RUNNER_TEMP/export/ucode-commit.txt"
       - name: Exercise actual MIPS musl validators without modem hardware
         run: |
           set -o pipefail
           root="$RUNNER_TEMP/audit/rootfs"
-          cp /usr/bin/qemu-mipsel-static "$root/qemu"
-          cp -a package scripts "$root/"
+          sudo cp /usr/bin/qemu-mipsel-static "$root/qemu"
+          sudo cp -a package scripts "$root/"
           status=0
           for test in test-t99-control.uc test-vtmodem-sms-jobs.uc test-t99-control-rpc.uc; do
             echo "=== MIPS/musl $test ===" | tee -a "$RUNNER_TEMP/export/binary-tests.txt"
