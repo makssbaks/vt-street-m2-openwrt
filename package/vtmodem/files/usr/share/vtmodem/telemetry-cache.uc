@@ -231,6 +231,18 @@ function detect_modem() {
 		};
 	}
 
+	usb = find_usb('413c', '81d7');
+	let dw_at = access('/dev/dw5821e-at') ? '/dev/dw5821e-at' : '';
+	if (length(usb) && length(dw_at)) {
+		return {
+			type: 'dell-dw5821e', usb_id: '413c:81d7', usb_device: usb,
+			generation: usb + ':' + trim(readfile('/sys/bus/usb/devices/' + usb + '/devnum') ?? ''),
+			at_port: dw_at,
+			control_device: access('/dev/cdc-wdm0') ? '/dev/cdc-wdm0' : '',
+			data_interface: access('/sys/class/net/wwan0') ? 'wwan0' : ''
+		};
+	}
+
 	return null;
 }
 

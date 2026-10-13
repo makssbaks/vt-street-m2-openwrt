@@ -132,7 +132,7 @@ function create() {
 			_('Управление соединением доступно только пользователю с правами записи.') ]) ]);
 	sync();
 	return { node: node,
-		update: function(data) { supported = !!data && data.type === 't99w175'; sync(); },
+		update: function(data) { supported = !!data && (data.type === 't99w175' || data.type === 'dell-dw5821e'); sync(); },
 		stop: function() { stopped = true; stopTimer(); if (modalOpen) ui.hideModal(); modalOpen = false; sync(); },
 		suspend: function() { suspended = true; stopTimer(); if (!modalOpen && !requestPending) busy = false; sync(); },
 		resume: function() { suspended = false; sync(); }

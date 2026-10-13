@@ -11,7 +11,7 @@ ROOT="$(cd "$ROOT" && pwd)"
   exit 1
 }
 cd "$REPO"
-for test in test-t99-control.uc test-vtmodem-sms-jobs.uc test-t99-control-rpc.uc test-vtmodem-connection.uc; do
+for test in test-t99-control.uc test-vtmodem-sms-jobs.uc test-t99-control-rpc.uc test-vtmodem-connection.uc test-vtmodem-collector.uc; do
   echo "===== ACTUAL MIPS/MUSL $test ====="
   timeout --kill-after=5s 30s "$QEMU" -L "$ROOT" "$ROOT/usr/bin/ucode" \
     -L "$ROOT/usr/lib/ucode/*.so" "scripts/tests/$test"

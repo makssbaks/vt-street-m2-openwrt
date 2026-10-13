@@ -11,8 +11,10 @@ qmi_usb_generation() {
 	# Canonical sysfs nests interfaces below the USB device directory:
 	# .../usb1/1-1/1-1:1.4, not .../usb1/1-1:1.4.
 	root="${path%/*}"
-	[ "$(cat "$root/idVendor" 2>/dev/null)" = 05c6 ] || return 1
-	[ "$(cat "$root/idProduct" 2>/dev/null)" = 9025 ] || return 1
+	case "$(cat "$root/idVendor" 2>/dev/null):$(cat "$root/idProduct" 2>/dev/null)" in
+		05c6:9025|413c:81d7) ;;
+		*) return 1 ;;
+	esac
 	bus="$(cat "$root/busnum" 2>/dev/null)"
 	num="$(cat "$root/devnum" 2>/dev/null)"
 	# BusyBox stat is disabled in the base profile; ls -di is available.

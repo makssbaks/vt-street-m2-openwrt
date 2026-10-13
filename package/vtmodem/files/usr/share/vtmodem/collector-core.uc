@@ -58,6 +58,17 @@ function specs(modem) {
 		push(result, { name: 't99_session', seconds: 5, max_age: 15,
 			argv: [ '/bin/ubus', '-t', '1', 'call', 'network.interface.modem', 'status' ], parse: parse_session });
 	}
+	else if (modem.type == 'dell-dw5821e') {
+		if (modem.control_device == '/dev/cdc-wdm0') {
+			push(result, { name: 'qmi_signal', seconds: 5, max_age: 15,
+				argv: [ '/usr/bin/qmicli', '-d', '/dev/cdc-wdm0', '-p', '--nas-get-signal-info' ], parse: parse_signal });
+			push(result, { name: 'qmi_radio', seconds: 30, max_age: 90,
+				argv: [ '/usr/bin/qmicli', '-d', '/dev/cdc-wdm0', '-p', '--nas-get-rf-band-info' ], parse: parse_radio });
+		}
+		at('iccid', 'AT+CCID', '+CCID:', 300);
+		push(result, { name: 't99_session', seconds: 5, max_age: 15,
+			argv: [ '/bin/ubus', '-t', '1', 'call', 'network.interface.modem', 'status' ], parse: parse_session });
+	}
 	else {
 		at('iccid', 'AT+CCID', '+CCID:', 300);
 		at('cesq', 'AT+CESQ', '+CESQ:', 30);

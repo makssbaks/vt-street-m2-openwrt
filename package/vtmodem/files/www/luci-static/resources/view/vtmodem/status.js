@@ -274,18 +274,20 @@ function renderStatus(s) {
 	}
 
 	var isT99 = s.type === 't99w175';
-	var t99Session = record(isT99 && s.t99_session);
+	var isDW = s.type === 'dell-dw5821e';
+	var isQmi = isT99 || isDW;
+	var qmiSession = record(isQmi && s.t99_session);
 	var t99Link = record(isT99 && s.t99_link);
 	var summary = grid([
 		card(_('SIM'), simState(s.sim_state), s.iccid ? _('ICCID определён') : ''),
 		card(_('Оператор'), operatorName(s.operator)),
 		card(_('Сеть'), registrationName(s.registration)),
-		card(_('Передача данных'), isT99 ? sessionState(t99Session) : dataState(s),
-			isT99 ? sessionInterface(t99Session) || '-' : s.data_interface || '-')
+		card(_('Передача данных'), isQmi ? sessionState(qmiSession) : dataState(s),
+			isQmi ? sessionInterface(qmiSession) || '-' : s.data_interface || '-')
 	]);
 
-	var qmiSignal = isT99 && s.qmi_signal || {};
-	var qmiRadio = isT99 && s.qmi_radio || {};
+	var qmiSignal = isQmi && s.qmi_signal || {};
+	var qmiRadio = isQmi && s.qmi_radio || {};
 	var t99Temperature = isT99 && s.t99_temperature || {};
 	var t99Radio = isT99 && s.t99_radio || {};
 	var signalCards = [
@@ -293,7 +295,7 @@ function renderStatus(s) {
 		card(_('RSRP'), measurement(qmiSignal.rsrp_dbm, 'dBm', rsrp(s.cesq))),
 		card(_('RSRQ'), measurement(qmiSignal.rsrq_db, 'dB', rsrq(s.cesq)))
 	];
-	if (isT99)
+	if (isQmi)
 		signalCards.push(card(_('SNR'), measurement(qmiSignal.snr_db, 'dB')));
 	signalCards.push(isT99
 		? card(_('Температура'), measurement(t99Temperature.tsens_c, '°C'),
@@ -318,6 +320,13 @@ function renderStatus(s) {
 			row(_('RSRP по антеннам'), antennaSignal(t99Radio.antenna_rsrp_dbm))
 		);
 	}
+	else if (isDW) {
+		radioRows.push(
+			row(_('Диапазон LTE'), bandName(qmiRadio.band)),
+			row(_('EARFCN'), measurement(qmiRadio.earfcn)),
+			row(_('Ширина канала'), measurement(qmiRadio.bandwidth_mhz, 'MHz'))
+		);
+	}
 	else {
 		radioRows.push(
 			row(_('Дополнительные измерения сигнала'), s.xcesq, true),
@@ -327,10 +336,10 @@ function renderStatus(s) {
 	}
 	radioRows.push(
 		row(_('Регистрация в пакетной сети'), attachedState(s.attached)),
-		row(_('Канал данных'), isT99 ? sessionChannel(t99Session) : s.data_channel, true)
+		row(_('Канал данных'), isQmi ? sessionChannel(qmiSession) : s.data_channel, true)
 	);
-	if (isT99)
-		radioRows.push(row(_('Адрес IPv4'), sessionAddresses(t99Session), true));
+	if (isQmi)
+		radioRows.push(row(_('Адрес IPv4'), sessionAddresses(qmiSession), true));
 	var radio = E('table', { 'class': 'table' }, radioRows);
 
 	var modem = E('table', { 'class': 'table' }, [
@@ -349,7 +358,7 @@ function renderStatus(s) {
 		row(_('Интерфейс данных'), s.data_interface, true),
 		row(_('MAC интерфейса данных'), isT99 ? linkAddress(t99Link) : s.data_mac, true),
 		row(_('Контексты PDP'), s.pdp_contexts, true),
-		row(isT99 ? _('Серверы DNS') : _('Профили DNS'), isT99 ? sessionDNS(t99Session) : s.dns, true)
+		row(isQmi ? _('Серверы DNS') : _('Профили DNS'), isQmi ? sessionDNS(qmiSession) : s.dns, true)
 	]);
 
 	return E([], [

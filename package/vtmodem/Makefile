@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vtmodem
-PKG_RELEASE:=21
+PKG_RELEASE:=22
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -14,8 +14,9 @@ endef
 
 define Package/vtmodem/description
   Vendor-independent modem backend for VT-STREET-M2.
-  Supports Fibocom L860-GL-16 and Dell/Foxconn T99W175 detection,
-  modem telemetry, T99 USB binding, QMI networking and SMS PDU operations.
+  Supports Fibocom L860-GL-16, Dell/Foxconn T99W175 and Dell DW5821e/T77W968.
+  Provides modem telemetry, automatic QMI USB reconciliation, QMI networking
+  and T99W175 SMS PDU operations.
 endef
 
 define Build/Prepare

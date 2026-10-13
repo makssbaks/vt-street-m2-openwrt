@@ -186,10 +186,20 @@ ensure_network_config()
 	/usr/libexec/t99w175-net-ready 8>&- </dev/null >/dev/null 2>&1 &
 }
 
+other_qmi_modem_present()
+{
+	for d in /sys/bus/usb/devices/*; do
+		[ "$(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)" = "413c:81d7" ] && return 0
+	done
+	return 1
+}
+
 modem_unavailable()
 {
 	rm -f "$READYFILE"
 	remove_aliases
+	# DW5821e has its own reconciler but shares the same netifd QMI interface.
+	other_qmi_modem_present && return 0
 	[ "$(uci -q get network.modem.proto)" = t99w175qmi ] || return 0
 	# Availability does not alter netifd's runtime autostart/manual Stop flag.
 	ubus -t 3 call network.interface notify_proto \

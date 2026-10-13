@@ -41,6 +41,10 @@ for (let c in calls) assert(c.budget <= 1500, 'Every spawned query has a deadlin
 calls = [];
 collect_round(cache, m, qs, {}, (argv, budget) => push(calls, argv), () => 0, () => 1000, () => true, () => null);
 assert(length(calls) == 0, 'Accepted SMS job interrupts scheduling before another telemetry query');
+let dw = { type: 'dell-dw5821e', generation: '2-1:2', at_port: '/dev/dw5821e-at', control_device: '/dev/cdc-wdm0' };
+let dqs = specs(dw);
+assert(length(filter(dqs, q => q.name == 'qmi_signal')) == 1 && length(filter(dqs, q => q.name == 'qmi_radio')) == 1 && length(filter(dqs, q => q.name == 't99_session')) == 1, 'DW5821e uses QMI signal/radio/session telemetry');
+assert(length(filter(dqs, q => index([ 'cell_measurement', 'ca_state', 'data_channel' ], q.name) >= 0)) == 0, 'DW5821e never receives Fibocom-only AT commands');
 let immutable = filter(qs, q => index([ 'manufacturer', 'model', 'firmware', 'imei' ], q.name) >= 0);
 assert(length(immutable) == 4, 'All static identity fields collected');
 for (let q in immutable) assert(q.seconds == 300, 'Static identity is not polled at antenna-mode cadence');
