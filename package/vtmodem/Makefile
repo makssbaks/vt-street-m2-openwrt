@@ -50,6 +50,8 @@ define Package/vtmodem/install
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/usb
 	$(INSTALL_BIN) ./files/etc/hotplug.d/usb/03_t99w175 \
 		$(1)/etc/hotplug.d/usb/03_t99w175
+	$(INSTALL_BIN) ./files/etc/hotplug.d/usb/04_dw5821e \
+		$(1)/etc/hotplug.d/usb/04_dw5821e
 
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) ./files/usr/libexec/* $(1)/usr/libexec/
