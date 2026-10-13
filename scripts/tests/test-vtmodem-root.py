@@ -33,13 +33,23 @@ class FirmwareRootTests(unittest.TestCase):
         header = bytearray(52)
         header[:7] = b'\x7fELF\x01\x01\x01'
         struct.pack_into('<H', header, 18, 8)
-        for name in ['vt-at.real', 'vt-sms.real']:
+        for name in ['vt-at.real', 'vt-sms.real', 'vt-traffic-db']:
             target = self.root / 'usr/bin' / name
             target.write_bytes(header)
             target.chmod(0o755)
+        target = self.root / 'usr/sbin/vnstatd'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(header + b'VT_VNSTAT_FLUSH_EXIT_V1')
+        target.chmod(0o755)
+
+    def test_unpatched_vnstat_is_rejected(self):
+        path = self.root / 'usr/sbin/vnstatd'
+        path.write_bytes(path.read_bytes()[:52])
+        with self.assertRaisesRegex(ValueError, 'patch is missing'):
+            module.validate(self.root, self.source)
 
     def test_complete_package(self):
-        self.assertEqual(len(module.validate(self.root, self.source)), 4)
+        self.assertEqual(len(module.validate(self.root, self.source)), 6)
 
     def test_stale_page_is_rejected(self):
         (self.root / 'www/luci-static/resources/view/vtmodem/status.js').write_text('old-version')

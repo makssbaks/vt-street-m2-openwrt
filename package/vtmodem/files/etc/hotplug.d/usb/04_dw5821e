@@ -1,0 +1,143 @@
+#!/bin/sh
+# Dell DW5821e / Foxconn T77W968 (413c:81d7) QMI reconciliation.
+TAG="dw5821e-hotplug"
+LOCKFILE="/tmp/dw5821e-hotplug.lock"
+READYFILE="/tmp/dw5821e-hotplug.ready"
+log(){ logger -t "$TAG" "$*"; }
+remove_alias(){ rm -f /dev/dw5821e-at; }
+find_modem()
+{
+	for d in /sys/bus/usb/devices/*; do
+		[ "$(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)" = "413c:81d7" ] || continue
+		readlink -f "$d"; return 0
+	done
+	return 1
+}
+other_qmi_modem_present()
+{
+	for d in /sys/bus/usb/devices/*; do
+		[ "$(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)" = "05c6:9025" ] && return 0
+	done
+	return 1
+}
+ensure_drivers()
+{
+	[ -d /sys/bus/usb/drivers/qmi_wwan ] || modprobe qmi_wwan 2>/dev/null
+	[ -d /sys/bus/usb/drivers/option ] || modprobe option 2>/dev/null
+	[ -d /sys/bus/usb/drivers/qmi_wwan ] && [ -d /sys/bus/usb/drivers/option ]
+}
+ensure_config1()
+{
+	local dev="$1" current n=0
+	current="$(cat "$dev/bConfigurationValue" 2>/dev/null)"
+	[ "$current" = 1 ] && return 0
+	[ "$current" = 2 ] || { log "ERROR: unsupported USB configuration: $current"; return 1; }
+	# Hardware-observed DW5821e config 1 exposes qmi_wwan/cdc-wdm0/wwan0.
+	# This changes only USB functions; it is not a USB power reset or CFUN change.
+	echo 1 >"$dev/bConfigurationValue" 2>/dev/null || return 1
+	while [ "$n" -lt 10 ]; do
+		[ "$(cat "$dev/bConfigurationValue" 2>/dev/null)" = 1 ] && return 0
+		sleep 1; n=$((n + 1))
+	done
+	return 1
+}
+find_at_port()
+{
+	local t tty path out
+	for t in /sys/class/tty/ttyUSB*; do
+		[ -e "$t" ] || continue
+		tty="$(basename "$t")"
+		path="$(readlink -f "$t/device" 2>/dev/null)"
+		case "$path" in "$MODEM"/*) ;; *) continue ;; esac
+		out="$(/usr/bin/vt-at -t 800 "/dev/$tty" ATI 2>/dev/null)" || continue
+		printf '%s\n' "$out" | grep -Eq 'DW5821e|T77W968|Model: 4116|Manufacturer: DELL' || continue
+		echo "/dev/$tty"; return 0
+	done
+	return 1
+}
+make_alias()
+{
+	local at
+	at="$(find_at_port)" || { remove_alias; return 1; }
+	remove_alias; ln -s "$at" /dev/dw5821e-at
+}
+ready_state()
+{
+	local dev="$1" at qmi tty atpath
+	[ "$(cat "$dev/bConfigurationValue" 2>/dev/null)" = 1 ] || return 1
+	at="$(readlink -f /dev/dw5821e-at 2>/dev/null)"; [ -c "$at" ] || return 1
+	[ -c /dev/cdc-wdm0 ] || return 1
+	[ -e /sys/class/net/wwan0 ] || return 1
+	qmi="$(readlink -f /sys/class/usbmisc/cdc-wdm0/device 2>/dev/null)"
+	case "$qmi" in "$dev"/*) ;; *) return 1 ;; esac
+	[ "$(readlink -f /sys/class/net/wwan0/device 2>/dev/null)" = "$qmi" ] || return 1
+	tty="$(basename "$at")"; atpath="$(readlink -f "/sys/class/tty/$tty/device" 2>/dev/null)"
+	case "$atpath" in "$dev"/*) ;; *) return 1 ;; esac
+	return 0
+}
+find_firewall_zone()
+{
+	local section="$1" name networks
+	config_get name "$section" name; config_get networks "$section" network
+	[ "$name" != wan ] || wan_section="$section"
+	case " $networks " in *" modem "*) already_assigned=1 ;; esac
+}
+assign_initial_firewall_zone()
+{
+	local wan_section already_assigned=0
+	. /lib/functions.sh
+	config_load firewall; config_foreach find_firewall_zone zone
+	[ "$already_assigned" = 0 ] && [ -n "$wan_section" ] || return 0
+	uci -q add_list "firewall.$wan_section.network=modem" || return 1
+	uci -q commit firewall || return 1
+	firewall_changed=1; log 'added new modem interface to firewall wan zone'
+}
+ensure_network_config()
+{
+	local network_changed=0 firewall_changed=0
+	if ! uci -q get network.modem >/dev/null 2>&1; then
+		uci -q set network.modem='interface'
+		uci -q set network.modem.proto='t99w175qmi'
+		uci -q set network.modem.auth='none'
+		uci -q set network.modem.pdptype='ip'
+		uci -q set network.modem.apn='internet'
+		uci -q commit network
+		network_changed=1
+		log "created default network.modem (DW5821e QMI, APN internet, IPv4)"
+		assign_initial_firewall_zone || log 'ERROR: initial firewall assignment failed'
+	fi
+	[ "$network_changed" -eq 0 ] || ubus -t 3 call network reload >/dev/null 2>&1 || true
+	[ "$firewall_changed" -eq 0 ] || /etc/init.d/firewall reload >/dev/null 2>&1 || true
+	/usr/libexec/dw5821e-net-ready 8>&- </dev/null >/dev/null 2>&1 &
+}
+modem_unavailable()
+{
+	rm -f "$READYFILE"; remove_alias
+	other_qmi_modem_present && return 0
+	[ "$(uci -q get network.modem.proto)" = t99w175qmi ] || return 0
+	ubus -t 3 call network.interface notify_proto '{"interface":"modem","action":5,"available":false}' >/dev/null 2>&1 || true
+}
+main()
+{
+	local stable=0 n=0
+	umask 077; exec 8>>"$LOCKFILE" || return 1; flock -n 8 || return 0
+	MODEM="$(find_modem)"
+	[ -n "$MODEM" ] || { modem_unavailable; return 0; }
+	ensure_drivers || { log "ERROR: required QMI/serial drivers unavailable"; return 1; }
+	ensure_config1 "$MODEM" || { log "ERROR: failed to select USB configuration 1"; return 1; }
+	while [ "$n" -lt 15 ]; do
+		MODEM="$(find_modem)"; [ -n "$MODEM" ] || break
+		make_alias >/dev/null 2>&1
+		if ready_state "$MODEM"; then stable=$((stable + 1)); else stable=0; fi
+		[ "$stable" -ge 3 ] && break
+		sleep 1; n=$((n + 1))
+	done
+	make_alias >/dev/null 2>&1
+	if ready_state "$MODEM"; then
+		echo "$(basename "$MODEM")" >"$READYFILE"
+		log "ready: AT=$(readlink -f /dev/dw5821e-at) QMI=/dev/cdc-wdm0 IF=wwan0 USB_CONFIG=1"
+		ensure_network_config; return 0
+	fi
+	modem_unavailable; log "ERROR: DW5821e USB reconciliation incomplete"; return 1
+}
+[ -n "$INCLUDE_ONLY" ] || { main; exit $?; }

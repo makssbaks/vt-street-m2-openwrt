@@ -1,0 +1,87 @@
+#!/bin/sh
+set -eu
+umask 077
+state=/var/run/vtmodem-traffic
+data=/etc/vtmodem/traffic
+config=/etc/vtmodem/vnstat.conf
+child=
+owns_lifetime=0
+mkdir -p "$state" "$data"
+
+stop_child() {
+    [ -n "$child" ] || return 0
+    kill -TERM "$child" 2>/dev/null || true
+    local tries=0
+    while kill -0 "$child" 2>/dev/null; do
+        tries=$((tries + 1))
+        [ "$tries" -lt 11 ] || return 1
+        sleep 1
+    done
+    local rc=0
+    wait "$child" || rc=$?
+    child=
+    rm -f "$state/daemon-child"
+    return "$rc"
+}
+
+terminate() {
+    [ "$owns_lifetime" = 0 ] || rm -f "$state/daemon-ready"
+    stop_child || true
+    exit 0
+}
+trap terminate INT TERM
+# Enrollment asks only this dedicated service to rescan its private database.
+trap '[ -z "$child" ] || kill -HUP "$child" 2>/dev/null || true' HUP
+
+start_child() {
+    /usr/sbin/vnstatd --config "$config" --nodaemon --noadd --startempty --noremove 8>&- &
+    child=$!
+    printf '%s\n' "$child" > "$state/daemon-child"
+    printf '%s\n' "$$" > "$state/daemon-ready"
+}
+
+# Upstream 2.13 can exit 0 after a failed final SQLite flush. Require the
+# pinned final-flush status fix before trusting daemon exit as confirmation.
+[ "$(/usr/sbin/vnstatd --vt-flush-exit-status)" = VT_VNSTAT_FLUSH_EXIT_V1 ] || exit 1
+/usr/bin/vt-traffic-db restore
+while [ ! -s "$state/time-synced" ] && [ ! -s "$state/time-confirmed" ]; do sleep 2; done
+
+# Intentionally inherited by vnstatd: even if the supervisor is killed, a
+# surviving writer keeps this lifetime lock and blocks a competing instance.
+# While waiting for time no writer runs, so historical backups remain usable.
+exec 7> "$state/daemon.lock"
+flock -n 7 || exit 1
+owns_lifetime=1
+rm -f "$state/daemon-ready" "$state/daemon-child"
+exec 8> "$state/operation.lock"
+flock -w 5 8 || exit 1
+/usr/sbin/vnstatd --config "$config" --initdb --noadd
+start_child
+flock -u 8
+exec 8>&-
+
+while kill -0 "$child" 2>/dev/null; do
+    if [ -s "$state/backup-request" ]; then
+        request=$(cat "$state/backup-request")
+        case "$request" in backup-token.??????) ;; *) rm -f "$state/backup-request"; continue ;; esac
+        case "$request" in *[!A-Za-z0-9._-]*) rm -f "$state/backup-request"; continue ;; esac
+        rm -f "$state/daemon-ready" "$state/backup-request"
+        rc=0
+        if stop_child; then
+            /usr/bin/vt-traffic-db backup || rc=$?
+        else
+            rc=1
+        fi
+        # Never start a second writer when the old daemon failed to stop.
+        # Restart a stopped daemon even if snapshot creation failed.
+        if [ -z "$child" ]; then start_child; fi
+        printf '%s %s\n' "$request" "$rc" > "$state/backup-result.new"
+        mv "$state/backup-result.new" "$state/backup-result"
+    fi
+    sleep 1 7>&- &
+    wait $! || true
+done
+rm -f "$state/daemon-ready"
+wait "$child" || true
+rm -f "$state/daemon-child"
+exit 1

@@ -3,7 +3,7 @@ name: Build VT-STREET-M2 OpenWrt 25.12
 on:
   workflow_dispatch:
   push:
-    branches: [ main, t99w175-autostart-preflight ]
+    branches: [ main, t99w175-autostart-preflight, fix/firmware-hardening-20260913 ]
     paths:
       - 'port/**'
       - 'config/**'
@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 300
 
     env:
+      PYTHONDONTWRITEBYTECODE: "1"
       # Official OpenWrt openwrt-25.12 commit observed 2026-09-11.
       OPENWRT_COMMIT: 6c40bc0bb0e78c67a1f7d8e6d4b048e78951b932
 
@@ -37,13 +38,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential clang flex bison g++ gawk gcc-multilib gettext git \
             libncurses-dev libssl-dev python3 python3-setuptools python3-pyelftools \
-            rsync swig unzip zlib1g-dev file wget curl time xsltproc ca-certificates busybox nodejs
+            rsync swig unzip zlib1g-dev file wget curl time xsltproc ca-certificates busybox nodejs libsqlite3-dev qemu-user-static
 
       - name: Test T99 startup handoff without modem hardware
         run: python3 scripts/test-t99w175-net-ready.py
 
       - name: Test firmware package validation
         run: python3 scripts/tests/test-vtmodem-root.py
+
+      - name: Test image validation and MAC preservation
+        run: |
+          python3 scripts/tests/test-vt-image.py
+          python3 scripts/tests/test-vt-mac.py
+          python3 scripts/tests/test-build-workflow.py
 
       - name: Fetch pinned OpenWrt 25.12 source
         run: |
@@ -61,16 +68,17 @@ jobs:
           restore-keys: |
             openwrt-25.12-dl-
 
-      - name: Update and install feeds
-        working-directory: openwrt
+      - name: Install immutable feed revisions
         run: |
+          cp config/feeds.conf.lock openwrt/feeds.conf
+          cd openwrt
           ./scripts/feeds update -a
+          python3 ../scripts/build-identity.py --feeds-only "$PWD"
           ./scripts/feeds install -a
 
       - name: Apply VT-STREET-M2 board port
         run: |
-          chmod +x scripts/apply-port.sh scripts/collect-and-validate.sh
-          ./scripts/apply-port.sh "$GITHUB_WORKSPACE/openwrt"
+          bash scripts/apply-port.sh "$GITHUB_WORKSPACE/openwrt"
           echo '===== SELECTED CONFIG ====='
           grep -E '^(CONFIG_TARGET_ramips|CONFIG_PACKAGE_(luci|luci-ssl|vtmodem|uqmi|kmod-usb-acm|kmod-usb-net-cdc-ncm|kmod-usb-net-qmi-wwan|kmod-usb-serial-option|kmod-usb3))' openwrt/.config || true
 
@@ -88,7 +96,7 @@ jobs:
           make -j"$(nproc)" package/utils/ucode/host/compile V=s
 
       - name: Test VT Modem web and backend fixtures without hardware
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: bash scripts/test-vtmodem-web.sh
 
       - name: Build OpenWrt
@@ -103,7 +111,7 @@ jobs:
 
       - name: Collect and validate firmware
         run: |
-          ./scripts/collect-and-validate.sh "$GITHUB_WORKSPACE/openwrt" "$GITHUB_WORKSPACE/artifacts"
+          bash scripts/collect-and-validate.sh "$GITHUB_WORKSPACE/openwrt" "$GITHUB_WORKSPACE/artifacts"
           echo '===== VALIDATION ====='
           cat artifacts/VALIDATION.txt
 

@@ -1,0 +1,8 @@
+#!/bin/sh
+umask 077
+mkdir -p /var/run/vtmodem/jobs || exit 1
+chmod 700 /var/run/vtmodem /var/run/vtmodem/jobs || exit 1
+# Never close fd 9 in query children: it prevents overlap after daemon failure.
+exec 9>/var/run/vtmodem/collector.lock || exit 1
+flock -n 9 || exit 1
+exec /usr/bin/ucode /usr/share/vtmodem/collector.uc

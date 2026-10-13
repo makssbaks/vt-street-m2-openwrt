@@ -102,9 +102,13 @@ function parse_bands(output) {
 
 function parse_priority(output) {
 	let ls = lines(output);
-	if (ls == null || length(ls) != 1) return null;
-	if (ls[0] == 'Band priority file does not exist') return [];
-	let m = match(ls[0], /^\^BAND_PRI: *([0-9,]+)$/);
+	if (ls == null) return null;
+	// Only a documented explicit unset message establishes an empty priority.
+	// An empty/OK-only reply is not evidence that a modem setting is unset.
+	ls = filter(ls, line => line != 'AT^BAND_PRI?');
+	if (length(ls) != 1) return null;
+	if (match(ls[0], /^(\^BAND_PRI: *)?Band priority file does not exist$/)) return [];
+	let m = match(ls[0], /^\^BAND_PRI: *([0-9]+(,[0-9]+)*),?$/);
 	return m ? numbers(m[1], 1, 256, 15, false) : null;
 }
 
@@ -130,22 +134,28 @@ function parse_lock(output) {
 	let m = match(ls[0], /^\^LTE_LOCK: *(.*)$/);
 	if (!m) return null;
 	let text = m[1];
-	if (match(text, /^\( *[0-9]+ *, *[0-9]+ *\)( *, *\( *[0-9]+ *, *[0-9]+ *\))*$/))
-		text = replace(text, /[() ]/g, '');
+	if (match(text, /^\( *[0-9]+ *, *[0-9]+ *\)( *, *\( *[0-9]+ *, *[0-9]+ *\))*( *, *)?$/))
+		text = replace(replace(text, /[() ]/g, ''), /,$/, '');
 	return lock_pairs(text);
 }
 
-function query(device, command, parser, runner) {
+function query(device, command, parser, runner, diagnostics, field) {
 	let response = runner(['/usr/bin/vt-at', '-t', '3000', device, command], 3500);
-	if (type(response) != 'object' || response.ok !== true) return null;
-	return parser(response.output);
+	let ok = type(response) == 'object' && response.ok === true;
+	let parsed = ok ? parser(response.output) : null;
+	if (parsed == null && diagnostics != null) diagnostics[field] = {
+		code: ok ? 'unrecognized_response' : 'query_failed',
+		exit_code: response?.exit_code ?? null,
+		raw: type(response?.output) == 'string' ? substr(response.output, 0, 256) : ''
+	};
+	return parsed;
 }
 
 function collect_control(device, runner) {
 	runner = bounded(runner ?? run_command);
 	let result = { ok: false, supported: device == '/dev/t99w175-at', mode: null,
 		mode_support: null, bands_supported: null, bands: null, priority: null,
-		lock: null, errors: [], tokens: { mode: null, priority: null, lock: null, bands: null } };
+		lock: null, errors: [], diagnostics: {}, tokens: { mode: null, priority: null, lock: null, bands: null } };
 	if (!result.supported) {
 		push(result.errors, 'Unsupported AT device');
 		return result;
@@ -159,8 +169,11 @@ function collect_control(device, runner) {
 		['lock', 'AT^LTE_LOCK?', parse_lock]
 	];
 	for (let item in commands) {
-		result[item[0]] = query(device, item[1], item[2], runner);
-		if (result[item[0]] == null) push(result.errors, `${item[0]}: query failed or response not recognized`);
+		result[item[0]] = query(device, item[1], item[2], runner, result.diagnostics, item[0]);
+		if (result[item[0]] == null) {
+			let d = result.diagnostics[item[0]];
+			push(result.errors, `${item[0]}: ${d.code}; ` + (length(d.raw) ? `reply ${sprintf('%J', d.raw)}` : 'no setting data received'));
+		}
 	}
 	for (let key in ['mode', 'priority', 'lock', 'bands']) result.tokens[key] = token(result[key]);
 	result.ok = true;
@@ -227,18 +240,17 @@ function apply_bands(device, desired, before, runner) {
 		return refused('Enabling bands requires a desired list of at most fifteen bands', before);
 	let current = before;
 	if (length(missing)) {
-		// The documentation leaves replacement versus additive enable semantics
-		// ambiguous. Both have fixtures, but are not both observed on this modem.
-		// Send the entire desired set once; accept only those two outcomes.
+		// Hardware verification on T99W175 GC.004 confirmed that operation 2
+		// replaces the complete LTE enabled set; it is not additive. Send the
+		// exact desired set once and require exact readback before proceeding.
 		let reply = runner(['/usr/bin/vt-at', '-t', '10000', device,
 			`AT^BAND_PREF=LTE,2,${join(',', desired)}`], 10500);
 		let after = query(device, 'AT^BAND_PREF?', parse_bands, runner);
 		if (type(reply) != 'object' || reply.ok !== true)
-			return write_failed(after, 'The enable command did not complete cleanly. Settings may have changed; refresh before another action.');
+			return write_failed(after, 'The band replacement command did not complete cleanly. Settings may have changed; refresh before another action.');
 		if (!consistent_bands(after, supported) || !unchanged_other_bands(current, after) ||
-		    (token(after.LTE.enabled) != token(desired) &&
-		     token(after.LTE.enabled) != token(joined_set(current.LTE.enabled, desired))))
-			return write_failed(after, 'Unexpected band readback after enabling. No further commands were sent.');
+		    token(after.LTE.enabled) != token(desired))
+			return write_failed(after, 'Unexpected band readback after replacement. No further commands were sent.');
 		current = after;
 	}
 	let extras = minus(current.LTE.enabled, desired);

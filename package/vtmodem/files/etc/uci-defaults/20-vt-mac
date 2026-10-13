@@ -19,6 +19,8 @@ factory_valid()
 {
 	local h="$1" first
 	[ "${#h}" -eq 12 ] || return 1
+	case "$h" in *[!0-9a-fA-F]*) return 1;; esac
+	h="$(printf '%s' "$h" | tr 'A-F' 'a-f')"
 	[ "$h" != "000000000000" ] || return 1
 	[ "$h" != "ffffffffffff" ] || return 1
 	first=$((0x${h%??????????}))
@@ -60,56 +62,109 @@ derive_mac()
 		"$(printf '%s' "$tail" | cut -c9-10)"
 }
 
-set_bridge_mac()
+mac_valid()
 {
-	local mac="$1" idx name
-	idx=0
+	local mac="$1"
+	[ "${#mac}" -eq 17 ] || return 1
+	printf '%s\n' "$mac" | grep -Eq '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' || return 1
+	factory_valid "$(printf '%s' "$mac" | tr -d ':')"
+}
+
+bridge_section()
+{
+	local idx=0 name
+	# @device indexing also enumerates named device sections.
 	while uci -q get "network.@device[$idx]" >/dev/null 2>&1; do
 		name="$(uci -q get "network.@device[$idx].name")"
 		if [ "$name" = "br-lan" ]; then
-			uci set "network.@device[$idx].macaddr=$mac"
-			uci set "network.lan.macaddr=$mac"
-			uci commit network
+			printf 'network.@device[%s]\n' "$idx"
 			return 0
 		fi
 		idx=$((idx + 1))
 	done
+	return 1
+}
 
-	uci set "network.lan.macaddr=$mac"
+set_bridge_mac()
+{
+	local mac="$1" section current
+	mac_valid "$mac" || return 1
+	section="$(bridge_section)"
+	if [ -n "$section" ]; then
+		current="$(uci -q get "$section.macaddr")"
+		# Never overwrite a configured valid address, including a custom MAC.
+		mac_valid "$current" || uci set "$section.macaddr=$mac" || return 1
+	fi
+	current="$(uci -q get network.lan.macaddr)"
+	mac_valid "$current" || uci set "network.lan.macaddr=$mac" || return 1
 	uci commit network
 }
 
-FACTORY="$(factory_hex)"
-if factory_valid "$FACTORY"; then
-	log "valid Factory MAC present; fallback not needed"
-	exit 0
-fi
+saved_mac()
+{
+	cat /etc/vt-street-m2.mac 2>/dev/null
+}
 
-# On blank-Factory T99 units, derive a deterministic locally-administered
-# LAN MAC from the modem USB serial.  uci-defaults runs before netifd starts,
-# so the bridge comes up with the stable address on the first clean boot.
-SERIAL=""
-i=0
-while [ "$i" -lt 15 ]; do
-	SERIAL="$(find_t99_serial)"
-	[ -n "$SERIAL" ] && break
-	sleep 1
-	i=$((i + 1))
-done
+save_mac()
+{
+	printf '%s\n' "$1" >/etc/vt-street-m2.mac || return 1
+	chmod 0644 /etc/vt-street-m2.mac
+}
 
-if [ -z "$SERIAL" ]; then
-	log "blank Factory MAC and no T99 USB serial yet; leaving defaults script for retry"
-	exit 1
-fi
+main()
+{
+	local section current factory serial mac i
+	section="$(bridge_section)"
+	current=""
+	[ -z "$section" ] || current="$(uci -q get "$section.macaddr")"
+	if mac_valid "$current"; then
+		log "configured LAN bridge MAC preserved"
+		return 0
+	fi
+	current="$(uci -q get network.lan.macaddr)"
+	if mac_valid "$current"; then
+		# An invalid explicit bridge MAC would otherwise override this LAN MAC.
+		set_bridge_mac "$current" || return 1
+		log "configured LAN MAC preserved"
+		return 0
+	fi
 
-MAC="$(derive_mac "$SERIAL")"
-if [ -z "$MAC" ]; then
-	log "unable to derive deterministic MAC from T99 serial"
-	exit 1
-fi
+	factory="$(factory_hex)"
+	if factory_valid "$factory"; then
+		log "valid Factory MAC present; fallback not needed"
+		return 0
+	fi
 
-set_bridge_mac "$MAC" || exit 1
-printf '%s\n' "$MAC" >/etc/vt-street-m2.mac
-chmod 0644 /etc/vt-street-m2.mac
-log "provisioned deterministic LAN MAC $MAC from T99 USB serial"
-exit 0
+	mac="$(saved_mac)"
+	if mac_valid "$mac"; then
+		set_bridge_mac "$mac" || return 1
+		log "restored saved LAN fallback MAC"
+		return 0
+	fi
+
+	# Only first provision on a blank-Factory unit needs the USB serial.
+	# Subsequent upgrades preserve UCI/the saved fallback even if the modem
+	# has been replaced or is not ready during uci-defaults.
+	serial=""
+	i=0
+	while [ "$i" -lt 15 ]; do
+		serial="$(find_t99_serial)"
+		[ -n "$serial" ] && break
+		sleep 1
+		i=$((i + 1))
+	done
+	if [ -z "$serial" ]; then
+		log "blank Factory MAC and no T99 USB serial yet; leaving defaults script for retry"
+		return 1
+	fi
+	mac="$(derive_mac "$serial")"
+	if ! mac_valid "$mac"; then
+		log "unable to derive deterministic MAC from T99 serial"
+		return 1
+	fi
+	set_bridge_mac "$mac" || return 1
+	save_mac "$mac" || return 1
+	log "provisioned deterministic LAN MAC $mac from T99 USB serial"
+}
+
+main "$@"

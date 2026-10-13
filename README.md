@@ -31,6 +31,9 @@ ModemExpert. The current integration candidate includes:
 - Multipart SMS display, send and delete controls.
 - T99 mode, LTE bands, search priority and cell-lock controls with explicit
   confirmation and readback.
+- Release 19 source changes: transactional QMI lifecycle, bounded AT/SMS,
+  asynchronous SMS jobs, shared cached telemetry, persistent traffic totals in
+  decimal GB, current rates and antenna-alignment graphs/comparisons.
 
 The test router runs build49 plus the verified web updates. T99 Status readings
 and automatic refresh, long Cyrillic SMS receive/send/delete, and Radio settings
@@ -45,5 +48,12 @@ sysupgrade root is checked for the expected VT Modem source files and executable
 helpers, in addition to the kernel limit and NAND upgrade routing checks.
 
 See [the integration record](docs/web-integration-20260913.md) for verified scope,
-build gates and the remaining image review. Existing feed updates still follow
-their configured branches; pinning OpenWrt alone does not pin those feed heads.
+build gates and the remaining image review. The audit follow-up now pins all
+five feed revisions, preserves configured/saved LAN MACs and strengthens the
+actual-image checks. See [build validation](docs/build-validation.md) and
+[retired historical hotfixes](docs/historical-hotfixes.md). These source changes
+have not yet been built into a new firmware or tested on the router.
+
+See [the release 19 implementation record](docs/firmware-r19-20260913.md) for the
+audit-to-fix mapping, host tests, traffic persistence limits and next build/device
+checks. The current runtime and release 19 source candidate are distinct versions.

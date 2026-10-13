@@ -1,0 +1,33 @@
+{
+  "vnstatversion": "2.13",
+  "jsonversion": "2",
+  "interfaces": [
+    {
+      "name": "wwan0",
+      "alias": "",
+      "created": {"date": {"year": 2026, "month": 9, "day": 10}, "timestamp": 1788998400},
+      "updated": {"date": {"year": 2026, "month": 9, "day": 13}, "time": {"hour": 12, "minute": 0}, "timestamp": 1789300800},
+      "traffic": {
+        "total": {"rx": 9007199254740993, "tx": 9876543210},
+        "fiveminute": [],
+        "hour": [],
+        "day": [
+          {"id": 3, "date": {"year": 2026, "month": 9, "day": 12}, "timestamp": 1789171200, "rx": 1230000000, "tx": 456000000},
+          {"id": 4, "date": {"year": 2026, "month": 9, "day": 13}, "timestamp": 1789257600, "rx": 2500000001, "tx": 500000001}
+        ],
+        "month": [
+          {"id": 1, "date": {"year": 2026, "month": 8}, "timestamp": 1785542400, "rx": 100000000000, "tx": 10000000000},
+          {"id": 2, "date": {"year": 2026, "month": 9}, "timestamp": 1788220800, "rx": 13000000001, "tx": 400000001}
+        ],
+        "year": []
+      }
+    },
+    {
+      "name": "br-lan",
+      "alias": "",
+      "created": {"timestamp": 1788998400},
+      "updated": {"timestamp": 1789300800},
+      "traffic": {"total": {"rx": 999999999999, "tx": 999999999999}, "day": [], "month": []}
+    }
+  ]
+}

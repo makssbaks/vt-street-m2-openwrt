@@ -1,0 +1,7 @@
+# Immutable openwrt-25.12 feed revisions reviewed on 2026-09-13.
+# Updating any pin is a source change requiring the fixture and image gates.
+src-git packages https://github.com/openwrt/packages.git^43cefaef3066e0493bb26d2f4279ca96378eed41
+src-git luci https://github.com/openwrt/luci.git^26299643a439e9998f4662e78045532abf568ec0
+src-git routing https://github.com/openwrt/routing.git^cc66db23430a923df3fe7941a097c5fd4040087b
+src-git telephony https://github.com/openwrt/telephony.git^2618106d5846a4a542fdf5809f0d3ed228ce439b
+src-git video https://github.com/openwrt/video.git^094bf58da6682f895255a35a84349a79dab4bf95

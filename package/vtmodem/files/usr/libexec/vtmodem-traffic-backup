@@ -1,0 +1,40 @@
+#!/bin/sh
+# Pause only the private accounting process, with no network or modem reset.
+set -eu
+umask 077
+state=/var/run/vtmodem-traffic
+mkdir -p "$state"
+exec 9> "$state/operation.lock"
+flock -w 5 9 || exit 1
+cleanup() {
+    rm -f "$state/backup-request"
+    [ -z "${token:-}" ] || rm -f "$token"
+}
+trap cleanup EXIT INT TERM
+if [ ! -s "$state/daemon-ready" ]; then
+    # This lock is inherited by the native writer. A timed-out flush or an
+    # orphaned child cannot be mistaken for an offline accounting service.
+    exec 8> "$state/daemon.lock"
+    flock -n 8 || exit 1
+    /usr/bin/vt-traffic-db backup
+    exit $?
+fi
+token=$(mktemp "$state/backup-token.XXXXXX")
+request=${token##*/}
+rm -f "$state/backup-result"
+printf '%s\n' "$request" > "$state/backup-request.new"
+mv "$state/backup-request.new" "$state/backup-request"
+tries=0
+while [ "$tries" -lt 20 ]; do
+    if [ -s "$state/backup-result" ]; then
+        read -r done_id rc < "$state/backup-result" || true
+        if [ "${done_id:-}" = "$request" ]; then
+            [ "${rc:-1}" = 0 ]
+            exit $?
+        fi
+    fi
+    tries=$((tries + 1))
+    sleep 1
+done
+echo 'VT Modem traffic flush confirmation timed out.' >&2
+exit 1

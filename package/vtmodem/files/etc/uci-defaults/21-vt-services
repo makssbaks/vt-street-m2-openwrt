@@ -1,0 +1,6 @@
+#!/bin/sh
+# VT traffic owns its database and vnstatd. Do not boot a second stock daemon.
+if [ -x /etc/init.d/vnstat ]; then
+	/etc/init.d/vnstat disable || exit 1
+fi
+exit 0

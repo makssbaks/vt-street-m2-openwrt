@@ -1,0 +1,9 @@
+#!/bin/sh
+# BusyBox ntpd supplies stratum on step, stratum change and periodic events.
+case "$ACTION" in step|stratum|periodic) ;; *) exit 0 ;; esac
+case "$stratum" in [1-9]|1[0-5]) ;; *) exit 0 ;; esac
+umask 077
+mkdir -p /var/run/vtmodem-traffic
+[ -s /var/run/vtmodem-traffic/time-synced ] && exit 0
+date +%s > /var/run/vtmodem-traffic/time-synced.new || exit 0
+mv /var/run/vtmodem-traffic/time-synced.new /var/run/vtmodem-traffic/time-synced
