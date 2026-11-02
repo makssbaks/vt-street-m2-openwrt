@@ -16,6 +16,29 @@ configuration. It is not a factory image or a NAND image. Verify SHA256 and run
 failure. Keep an off-device configuration backup and a copy of the original
 vendor image. The supplied config archive is not a complete recovery image.
 
+### Migration from the old board name
+
+The first r1 image's SHA256 is
+`77d8ef6c158f69a964e803658e13a6ca32ff10a87f26da417197befc1b0b2af8`.
+Although its fwtool metadata includes the old board ID, the 24.10.3 tar check
+also requires `sysupgrade-huasifei_wh3000-pro/CONTROL`. The canonical eMMC
+image instead contains `sysupgrade-huasifei_wh3000-pro-emmc/CONTROL`, so the
+old check rejects it with `invalid sysupgrade file`. This failure was reproduced
+with the upstream 24.10.3 checking code before preparing the migration image.
+
+For this confirmed eMMC device, run `scripts/wh3000-legacy-image.py SOURCE OUTPUT
+--fwtool /path/to/fwtool`. It accepts only the pinned r1 input, renames the tar
+directory and CONTROL board field, verifies that kernel/root payloads remain
+byte-identical, and preserves all fwtool compatibility metadata. It does not
+change bootloader, device tree, partition labels or router validation scripts.
+The old `emmc_upgrade_tar()` discovers the archive directory independently of
+the board name and uses the same `kernel` and `rootfs` partitions.
+
+The migration image is only for the first transition from the old board name.
+After booting as `huasifei,wh3000-pro-emmc`, use canonical eMMC images. In both
+cases run `sysupgrade -T` on the actual router and stop on any rejection;
+never force an upgrade. Host checks do not validate physical boot or cooling.
+
 ## Modem software
 
 * ModemManager + cdc_mbim owns the working `05c6:90d5` data connection.
