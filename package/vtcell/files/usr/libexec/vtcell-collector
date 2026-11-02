@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+umask 077
+mkdir -p /var/run/vtcell
+chmod 700 /var/run/vtcell
+exec 9>/var/run/vtcell/collector.lock
+flock -n 9 || exit 0
+exec /usr/bin/ucode /usr/share/vtcell/collector.uc

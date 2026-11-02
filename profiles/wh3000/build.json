@@ -1,0 +1,14 @@
+{
+  "openwrt_version": "25.12.6",
+  "target": "mediatek/filogic",
+  "profile": "huasifei_wh3000-pro-emmc",
+  "imagebuilder_sha256": "8ce0da1e2fb3d0454ebeb1e3df5705f2145e09ffe6f00d5077c18369719daf83",
+  "upstream_sysupgrade_sha256": "dac30a76379c597f49ef3311f114291970241cb74e99a0daf88c74b2b3e96f1c",
+  "modem_ui_version": "3.9.14",
+  "modem_ui_commit": "9356b1fe9ab278d79b32447dd7e88a46d110ae0a",
+  "modem_ui_apk_sha256": "d0e3df489bd18bd17721a18147b5c44da087add0991fb51c3418ee97b9c856b6",
+  "cell_ui_version": "1.0.0-r1",
+  "packages": ["luci-ssl", "luci-i18n-base-ru", "luci-app-5gmodem", "luci-app-vtcell", "modemmanager", "luci-proto-modemmanager", "ucode", "ucode-mod-fs", "rpcd-mod-ucode", "flock", "jsonfilter", "usbutils", "curl"],
+  "disabled_services": ["5gmodem-antenna", "5gmodem-leds", "5gmodem-btnleds", "5gmodem-sms-notify"],
+  "install_policy": "Existing WH3000 Pro eMMC only; preserve and inspect configuration; never force sysupgrade; not a factory image"
+}

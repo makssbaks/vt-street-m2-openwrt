@@ -1,0 +1,1 @@
+{"admin/modem/vtcell":{"title":"Сигнал и соты","order":5,"action":{"type":"view","path":"vtcell/status"},"depends":{"acl":["luci-app-vtcell"]}}}

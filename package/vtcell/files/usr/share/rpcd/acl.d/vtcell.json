@@ -1,0 +1,1 @@
+{"luci-app-vtcell":{"description":"Read modem signal and cell measurements","read":{"ubus":{"vtcell":["status"]}}}}

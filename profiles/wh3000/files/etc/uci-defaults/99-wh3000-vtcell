@@ -1,0 +1,29 @@
+#!/bin/sh
+# Applies only to this board. Existing network/Wi-Fi/passwords are retained.
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+	huasifei,wh3000-pro|huasifei,wh3000-pro-emmc) ;;
+	*) exit 0 ;;
+esac
+
+# Ensure MM runs at boot. The inherited rc.local already binds this modem's
+# serial interfaces. No USB composition changes, forced modem resets or band locks.
+/etc/init.d/modemmanager enable
+/etc/init.d/vtcell enable
+
+# Do not let optional UI daemons take over the board's fan, LEDs or mode button.
+for svc in 5gmodem-antenna 5gmodem-leds 5gmodem-btnleds 5gmodem-sms-notify; do
+	[ ! -x "/etc/init.d/$svc" ] || "/etc/init.d/$svc" disable
+done
+
+# Network-interface changes are never inferred from an unavailable website.
+uci -q set 5gmodem.health.enabled='0'
+uci -q set 5gmodem.health.healing='0'
+uci -q set 5gmodem.health.heal_wifi='0'
+uci -q set 5gmodem.health.lock_release='0'
+uci -q set 5gmodem.health.healing_migrated='1'
+uci -q set 5gmodem.health.healwifi_migrated='1'
+uci -q set 5gmodem.sms.cmd_enabled='0'
+uci -q set 5gmodem.sms.sms_via_mm='1'
+uci -q set 5gmodem.sms.ussd_via_mm='1'
+uci -q commit 5gmodem
+exit 0

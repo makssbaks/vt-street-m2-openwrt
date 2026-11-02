@@ -1,0 +1,6 @@
+'use strict';
+import { now, boot, read_json } from '/usr/share/vtcell/io.uc';
+import { expose } from '/usr/share/vtcell/core.uc';
+return { vtcell: { status: { call: function() {
+	return expose(read_json('/var/run/vtcell/status.json'),now(),boot());
+} } } };
