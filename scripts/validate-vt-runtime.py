@@ -14,8 +14,9 @@ REQUIRED = [
     'usr/libexec/vtmodem-connection', 'usr/share/vtmodem/connection-worker.uc',
     'etc/uci-defaults/21-vt-services',
 ]
-FORBIDDEN = ['sbin/uqmi', 'lib/netifd/proto/qmi.sh', 'lib/netifd/proto/wwan.sh',
-             'usr/sbin/wpad', 'usr/sbin/hostapd']
+# 5G Modem uses uqmi and standard QMI/WWAN helpers as dependencies.
+# Their presence does not change network.modem.proto=t99w175qmi.
+FORBIDDEN = ['usr/sbin/wpad', 'usr/sbin/hostapd']
 
 
 def resolved(root: Path, path: Path) -> Path:
@@ -36,6 +37,11 @@ def validate(root: Path, elf_only: bool = False) -> tuple[int, int]:
     for rel in [] if elf_only else FORBIDDEN:
         if (root / rel).exists() or (root / rel).is_symlink():
             raise ValueError(f'Unused/conflicting client remains: {rel}')
+    # Prevent competing daemon from taking the modem's QMI/AT ports at boot.
+    if not elf_only:
+        for link in (root / 'etc/rc.d').glob('S*modemmanager'):
+            if link.exists() or link.is_symlink():
+                raise ValueError(f'Conflicting modemmanager autostart: {link.relative_to(root)}')
     elf_count = deps = 0
     for path in root.rglob('*'):
         if path.is_symlink() or not path.is_file():
