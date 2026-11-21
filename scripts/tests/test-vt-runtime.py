@@ -38,9 +38,16 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Missing required'):
             m.validate(self.root)
 
-    def test_competing_client_rejected(self):
+    def test_uqmi_helper_allowed(self):
         (self.root/'sbin/uqmi').touch()
-        with self.assertRaisesRegex(ValueError, 'conflicting client'):
+        with patch.object(m.subprocess, 'run', return_value=SimpleNamespace(stdout='')):
+            self.assertEqual(m.validate(self.root), (1, 0))
+
+    def test_modemmanager_autostart_rejected(self):
+        autostart = self.root/'etc/rc.d/S50modemmanager'
+        autostart.parent.mkdir(parents=True, exist_ok=True)
+        autostart.symlink_to('../init.d/modemmanager')
+        with self.assertRaisesRegex(ValueError, 'modemmanager autostart'):
             m.validate(self.root)
 
     def test_host_binary_rejected(self):
