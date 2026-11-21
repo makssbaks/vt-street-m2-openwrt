@@ -1,0 +1,25 @@
+#!/bin/sh
+. /usr/share/vtmodem/t99-qmi.sh
+
+action="$1"
+interface="$2"
+case "$interface" in ''|*[!A-Za-z0-9_-]*) exit 1 ;; esac
+case "$action" in
+	monitor)
+		case "$3" in "$QMI_ROOT/$interface"/session.*) ;; *) exit 1 ;; esac
+		qmi_monitor "$interface" "$3"
+		;;
+	cleanup)
+		state="$3"
+		case "$state" in "$QMI_ROOT/$interface"/session.*) ;; *) exit 1 ;; esac
+		[ -d "$QMI_ROOT/$interface" ] || exit 0
+		exec 9>>"$QMI_ROOT/$interface/lock" || exit 1
+		flock -w 12 9 || exit 1
+		[ -d "$state" ] || exit 0
+		qmi_cleanup_state "$state" || {
+			logger -t t99w175-qmi 'Cleanup result uncertain; preserved state and blocked CID reuse'
+			exit 1
+		}
+		;;
+	*) exit 1 ;;
+esac

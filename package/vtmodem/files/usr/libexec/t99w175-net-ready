@@ -25,11 +25,11 @@ device_ready()
 
 	# Do not wake a different modem which happens to use cdc-wdm0/ttyUSB*.
 	qmi="$(readlink -f /sys/class/usbmisc/cdc-wdm0/device 2>/dev/null)"
-	case "$qmi" in "$root":*) ;; *) return 1 ;; esac
+	case "$qmi" in "$root"/*) ;; *) return 1 ;; esac
 	[ "$(readlink -f /sys/class/net/wwan0/device 2>/dev/null)" = "$qmi" ] || return 1
 	tty="$(basename "$(readlink -f /dev/t99w175-at 2>/dev/null)")"
 	atpath="$(readlink -f "/sys/class/tty/$tty/device" 2>/dev/null)"
-	case "$atpath" in "$root":*) ;; *) return 1 ;; esac
+	case "$atpath" in "$root"/*) ;; *) return 1 ;; esac
 	return 0
 }
 
@@ -83,12 +83,9 @@ main()
 				fi
 				;;
 			true)
-				# Unlike /sbin/ifup this does not reload configuration.
-				# Netifd's up method is a no-op for UP/SETUP states.
-				if ubus -t 3 call network.interface.modem up '{}' >/dev/null 2>&1; then
-					log "USB ready; requested startup of idle modem interface"
-					return 0
-				fi
+				# Netifd owns retries. Calling its up method here would set
+				# autostart=true and could undo a Stop after our status read.
+				return 0
 				;;
 		esac
 		sleep 2
@@ -98,4 +95,4 @@ main()
 	return 1
 }
 
-main "$@"
+[ -n "$INCLUDE_ONLY" ] || main "$@"

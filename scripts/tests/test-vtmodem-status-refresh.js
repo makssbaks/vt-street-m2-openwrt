@@ -10,7 +10,11 @@ const helpers = new Function('rpc', '_', source.slice(0, source.lastIndexOf('\nr
 	'\nreturn { createRefreshController, bindRefreshLifecycle, validStatus };')(
 	{ declare: options => { declarations.push(options); return () => Promise.resolve({ present: true }); } },
 	value => value);
-assert.deepEqual(declarations, [ { object: 'vtmodem', method: 'status', expect: {}, reject: true } ]);
+assert.deepEqual(declarations, [
+ { object: 'vtmodem', method: 'status', expect: {}, reject: true },
+ { object: 'vtmodem', method: 'traffic_status', expect: {}, reject: true },
+ { object: 'vtmodem', method: 'traffic_confirm_time', params: [ 'timestamp' ], expect: {}, reject: true }
+]);
 
 function deferred() {
 	let resolve, reject;
@@ -281,10 +285,10 @@ async function viewTests() {
 	const time = clock(), doc = eventTarget(), pageWindow = eventTarget(), Observer = observerType(), queries = [];
 	doc.hidden = false; doc.documentElement = {};
 	pageWindow.setTimeout = time.setTimer; pageWindow.clearTimeout = time.clearTimer;
-	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', source)(
+	const page = new Function('view', 'rpc', '_', 'E', 'document', 'window', 'MutationObserver', 'connection', source)(
 		{ extend: value => value },
-		{ declare: () => () => { const query = deferred(); queries.push(query); return query.promise; } },
-		value => value, element, doc, pageWindow, Observer);
+		{ declare: options => options.method === 'traffic_status' ? () => Promise.resolve({ ok: true }) : () => { const query = deferred(); queries.push(query); return query.promise; } },
+		value => value, element, doc, pageWindow, Observer, { create: () => ({ node: element('div'), update: () => {}, stop: () => {}, suspend: () => {}, resume: () => {} }) });
 	let loaded = page.load(); await flush();
 	queries[0].reject(new Error('first RPC failed'));
 	const initial = await loaded;

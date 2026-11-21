@@ -1,0 +1,17 @@
+#!/bin/sh
+# Keep saved upgrade configuration consistent with the image's boot policy.
+# VT traffic owns vnstatd; t99w175qmi owns the modem's QMI/AT ports.
+for service in vnstat modemmanager 5gmodem-mm-inhibit; do
+	if [ -x "/etc/init.d/$service" ]; then
+		"/etc/init.d/$service" disable || exit 1
+	fi
+done
+
+# The image already disables autosetup for coldplug before uci-defaults runs.
+# Apply the same setting to a configuration restored during sysupgrade, while
+# preserving the existing network interface and all other 5G Modem options.
+if [ "$(uci -q get '5gmodem.@5gmodem[0]')" = '5gmodem' ]; then
+	uci -q set '5gmodem.@5gmodem[0].auto_setup=0' || exit 1
+	uci -q commit 5gmodem || exit 1
+fi
+exit 0

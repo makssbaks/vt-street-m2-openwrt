@@ -1,41 +1,10 @@
 #!/usr/bin/env python3
-"""Package the reviewed T99 telemetry files for offline SCP installation."""
-import hashlib
-from pathlib import Path
-import sys
-import zipfile
-
-root = Path(__file__).resolve().parents[1]
-files = [
-    'package/vtmodem/files/usr/share/vtmodem/qmi.uc',
-    'package/vtmodem/files/usr/share/vtmodem/qmi-status.uc',
-    'package/vtmodem/files/usr/share/vtmodem/t99-radio.uc',
-    'package/vtmodem/files/usr/share/vtmodem/t99-session.uc',
-    'package/vtmodem/files/usr/share/rpcd/ucode/vtmodem',
-    'package/vtmodem/files/www/luci-static/resources/view/vtmodem/status.js',
-    'scripts/install-t99-telemetry.sh',
-    'scripts/tests/test-t99-qmi.uc',
-    'scripts/tests/test-t99-qmi-supervisor.uc',
-    'scripts/tests/test-t99-radio.uc',
-    'scripts/tests/test-t99-at-status.uc',
-    'scripts/tests/test-t99-rpc.uc',
-    'scripts/tests/test-t99-session.uc',
-    'scripts/tests/fixtures/t99-signal.txt',
-    'scripts/tests/fixtures/t99-radio.txt',
-    'scripts/tests/fixtures/t99-temp.txt',
-    'scripts/tests/fixtures/t99-ca.txt',
-    'scripts/tests/fixtures/t99-debug.txt',
-]
-output = Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'vt-t99-telemetry.zip'
-contents = {name: (root / name).read_bytes() for name in files}
-contents['SHA256SUMS'] = ''.join(
-    f'{hashlib.sha256(data).hexdigest()}  {name}\n'
-    for name, data in contents.items()
-).encode()
-with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-    for name, data in contents.items():
-        info = zipfile.ZipInfo('vt-t99-telemetry/' + name, (2026, 9, 13, 0, 0, 0))
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.external_attr = 0o100644 << 16
-        archive.writestr(info, data)
-print(f'{hashlib.sha256(output.read_bytes()).hexdigest()}  {output}')
+"""Retired historical hotfix builder; never mix current sources into old ZIPs."""
+raise SystemExit(
+    "ERROR: This historical hotfix builder is retired in the integration tree.\n"
+    "Current RPC/UI/helpers must be released together with matching dependencies.\n"
+    "For historical reproduction only, use an isolated checkout of\n"
+    "776871fdfc2a0ac905e7e4bee52b10b573586f20\n"
+    "and its original packaging script. Do not install that old bundle over a newer release.\n"
+    "See docs/historical-hotfixes.md. No archive was written."
+)

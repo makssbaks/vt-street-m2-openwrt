@@ -3,12 +3,25 @@
     "description": "Grant access to VT modem status, SMS and radio settings",
     "read": {
       "ubus": {
-        "vtmodem": [ "status", "sms_list", "radio_status" ]
+        "vtmodem": [
+          "status",
+          "traffic_status",
+          "sms_list_start",
+          "sms_job_status",
+          "radio_status",
+          "connection_status"
+        ]
       }
     },
     "write": {
       "ubus": {
-        "vtmodem": [ "sms_send", "sms_delete", "radio_apply" ]
+        "vtmodem": [
+          "sms_send_start",
+          "sms_delete_start",
+          "radio_apply",
+          "traffic_confirm_time",
+          "connection_action"
+        ]
       }
     }
   }

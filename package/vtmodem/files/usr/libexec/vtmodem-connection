@@ -1,0 +1,12 @@
+#!/bin/sh
+# Serialize whole interface actions. This is NOT the modem's AT/QMI lock.
+umask 077
+D=/var/run/vtmodem-connection
+mkdir -p "$D" || exit 1
+chmod 700 "$D" || exit 1
+exec 9>>"$D/lock" || exit 1
+if ! flock -n 9; then
+	printf '%s\n' '{"ok":false,"accepted":false,"outcome_unknown":false,"error_code":"busy","error":"Another connection action is running; read state before retrying"}'
+	exit 0
+fi
+exec /usr/bin/ucode /usr/share/vtmodem/connection-worker.uc "$@"
