@@ -75,6 +75,11 @@ jobs:
           ./scripts/feeds update -a
           python3 ../scripts/build-identity.py --feeds-only "$PWD"
           ./scripts/feeds install -a
+          # Add 5G Modem at the reviewed release tag, independently of the five locked OpenWrt feeds.
+          # The existing build identity still verifies the original immutable feeds.
+          printf '%s\n' 'src-git modem https://github.com/fildunsky/luci-app-5gmodem.git;v3.9.43' >> feeds.conf
+          ./scripts/feeds update modem
+          ./scripts/feeds install luci-app-5gmodem
 
       - name: Apply VT-STREET-M2 board port
         run: |
