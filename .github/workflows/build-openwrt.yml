@@ -80,6 +80,8 @@ jobs:
           printf '%s\n' 'src-git modem https://github.com/fildunsky/luci-app-5gmodem.git;v3.9.43' >> feeds.conf
           ./scripts/feeds update modem
           ./scripts/feeds install luci-app-5gmodem
+          # Restore exact locked feed manifest required by build-identity.py.
+          cp ../config/feeds.conf.lock feeds.conf
 
       - name: Apply VT-STREET-M2 board port
         run: |
