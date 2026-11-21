@@ -1,0 +1,5 @@
+# VT-STREET-M2: t99w175qmi owns the modem; mmcli must not auto-start a second owner.
+[D-BUS Service]
+Name=org.freedesktop.ModemManager1
+Exec=/bin/false
+User=root

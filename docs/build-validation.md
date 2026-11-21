@@ -63,6 +63,35 @@ not affected by the accounting daemon's stop/save/restart operation.
 
 ## Actual image checks
 
+### 5G Modem ownership policy (VT Modem release 23)
+
+Build 61 compiled successfully, but its rootfs preparation enabled
+`modemmanager`, conflicting with the existing final runtime gate and this
+board's `t99w175qmi` connection owner. A first-boot disable alone cannot satisfy
+an image-level check. The pinned OpenWrt `prepare_rootfs` enables init scripts
+after package installation; `apply-modem-policy.py` now extends its existing
+disabled-service list with `modemmanager` and `5gmodem-mm-inhibit`.
+
+The reviewed `port/rootfs-overlay` also blocks ModemManager D-Bus activation
+and sets the supported 5G Modem `auto_setup=0` option before coldplug. The
+first-boot service defaults repeat the disable and update that single option
+in restored settings, without changing the existing network interface.
+For upgrades retaining an old `auto_setup=1`, the modemswitch entrypoint also
+returns before loading helpers when called with `autosetup`; this closes the
+coldplug window before first-boot defaults run. Its source must match the pinned
+upstream SHA256, and all manual commands retain the original upstream body.
+The 5G Modem feed is pinned to v3.9.43 commit
+`548b8ff3f43fa6e60638cfe0f60cc8811a968494`.
+
+`test-vt-modem-policy.py` executes exact pinned OpenWrt rootfs and rc.common
+fixtures: it reproduces the unwanted startup, then verifies disabled competing
+services, retained network/VT startup, and overlay application. Runtime
+validation rejects re-enabled services or altered/missing policy files in the
+actual image. Validator stderr is retained in the artifact reports, while any
+failed check still prevents publication of the sysupgrade image.
+
+### Image structure and contents
+
 `collect-and-validate.sh` requires a fresh artifact directory and exactly one
 board-specific squashfs sysupgrade. Complete sysupgrade images are copied to the artifact directory only after all
 image gates pass; validation logs and extracted diagnostic components may remain

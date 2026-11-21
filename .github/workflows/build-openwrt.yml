@@ -51,6 +51,9 @@ jobs:
           python3 scripts/tests/test-vt-image.py
           python3 scripts/tests/test-vt-mac.py
           python3 scripts/tests/test-build-workflow.py
+          python3 scripts/tests/test-vt-modem-policy.py
+          python3 scripts/tests/test-vt-runtime.py
+          python3 scripts/tests/test-vt-stability.py
 
       - name: Fetch pinned OpenWrt 25.12 source
         run: |
@@ -75,9 +78,9 @@ jobs:
           ./scripts/feeds update -a
           python3 ../scripts/build-identity.py --feeds-only "$PWD"
           ./scripts/feeds install -a
-          # Add 5G Modem at the reviewed release tag, independently of the five locked OpenWrt feeds.
+          # Pin the reviewed v3.9.43 source used by the modem isolation overlays.
           # The existing build identity still verifies the original immutable feeds.
-          printf '%s\n' 'src-git modem https://github.com/fildunsky/luci-app-5gmodem.git;v3.9.43' >> feeds.conf
+          printf '%s\n' 'src-git modem https://github.com/fildunsky/luci-app-5gmodem.git^548b8ff3f43fa6e60638cfe0f60cc8811a968494' >> feeds.conf
           ./scripts/feeds update modem
           ./scripts/feeds install luci-app-5gmodem
           # Restore exact locked feed manifest required by build-identity.py.

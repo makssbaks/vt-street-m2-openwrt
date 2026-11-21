@@ -69,6 +69,9 @@ PY
 rm -rf "$OPENWRT_DIR/package/vtmodem"
 cp -a "$REPO_DIR/package/vtmodem" "$OPENWRT_DIR/package/vtmodem"
 
+# ModemManager is a UI dependency, but t99w175qmi owns this board's modem.
+python3 "$REPO_DIR/scripts/apply-modem-policy.py" "$OPENWRT_DIR"
+
 cp "$REPO_DIR/config/seed.config" "$OPENWRT_DIR/.config"
 python3 "$REPO_DIR/scripts/build-identity.py" "$OPENWRT_DIR"
 

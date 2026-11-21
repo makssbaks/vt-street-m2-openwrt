@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Negative cases for the final firmware inventory/dependency gate."""
 import importlib.util
+import hashlib
 from pathlib import Path
 import struct
 import tempfile
@@ -22,6 +23,21 @@ class RuntimeTests(unittest.TestCase):
             p = self.root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text('fixture')
+        for rel in m.POLICY_FILES:
+            p = self.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes((m.POLICY_OVERLAY / rel).read_bytes())
+        # Use a harmless upstream body; the production fingerprint is separately
+        # checked when the pinned feed is ported, before compilation.
+        source=b'#!/bin/sh\nprintf "runtime fixture\\n"\n'
+        fingerprint=patch.object(m.modem_policy, 'MODEMSWITCH_UPSTREAM_SHA256',
+                                 hashlib.sha256(source).hexdigest())
+        fingerprint.start()
+        self.addCleanup(fingerprint.stop)
+        guard=self.root / m.MODEMSWITCH_FILE
+        guard.parent.mkdir(parents=True, exist_ok=True)
+        guard.write_bytes(m.modem_policy.render_modemswitch(source))
+        guard.chmod(0o755)
         header = bytearray(52)
         header[:7] = b'\x7fELF\x01\x01\x01'
         struct.pack_into('<H', header, 18, 8)
@@ -48,6 +64,54 @@ class RuntimeTests(unittest.TestCase):
         autostart.parent.mkdir(parents=True, exist_ok=True)
         autostart.symlink_to('../init.d/modemmanager')
         with self.assertRaisesRegex(ValueError, 'modemmanager autostart'):
+            m.validate(self.root)
+
+    def test_inhibitor_autostart_rejected(self):
+        autostart = self.root/'etc/rc.d/S95-5gmodem-mm-inhibit'
+        autostart.parent.mkdir(parents=True, exist_ok=True)
+        autostart.symlink_to('../init.d/5gmodem-mm-inhibit')
+        with self.assertRaisesRegex(ValueError, '5gmodem-mm-inhibit autostart'):
+            m.validate(self.root)
+
+    def test_dbus_activation_of_modemmanager_rejected(self):
+        activation = self.root / m.POLICY_FILES[0]
+        activation.write_text(activation.read_text().replace('Exec=/bin/false', 'Exec=/usr/sbin/ModemManager'))
+        with self.assertRaisesRegex(ValueError, 'Modem isolation policy'):
+            m.validate(self.root)
+
+    def test_missing_modem_policy_rejected(self):
+        (self.root / m.POLICY_FILES[1]).unlink()
+        with self.assertRaisesRegex(ValueError, 'Modem isolation policy'):
+            m.validate(self.root)
+
+    def test_autosetup_reenabled_rejected(self):
+        config = self.root / m.POLICY_FILES[1]
+        config.write_text(config.read_text().replace("option auto_setup '0'", "option auto_setup '1'"))
+        with self.assertRaisesRegex(ValueError, 'Modem isolation policy'):
+            m.validate(self.root)
+
+    def test_policy_link_to_host_rejected(self):
+        config = self.root / m.POLICY_FILES[1]
+        config.unlink()
+        config.symlink_to(m.POLICY_OVERLAY / m.POLICY_FILES[1])
+        with self.assertRaisesRegex(ValueError, 'policy symlink'):
+            m.validate(self.root)
+
+    def test_missing_permanent_autosetup_guard_rejected(self):
+        guard = self.root / m.MODEMSWITCH_FILE
+        guard.write_bytes(guard.read_bytes().replace(m.modem_policy.MODEMSWITCH_GUARD, b'', 1))
+        with self.assertRaisesRegex(ValueError, 'autosetup|guard'):
+            m.validate(self.root)
+
+    def test_modified_manual_modem_actions_rejected(self):
+        guard = self.root / m.MODEMSWITCH_FILE
+        guard.write_bytes(guard.read_bytes() + b'\n# unexpected upstream change\n')
+        with self.assertRaisesRegex(ValueError, 'SHA256|source|fingerprint'):
+            m.validate(self.root)
+
+    def test_nonexecutable_autosetup_guard_rejected(self):
+        (self.root / m.MODEMSWITCH_FILE).chmod(0o644)
+        with self.assertRaisesRegex(ValueError, 'not executable'):
             m.validate(self.root)
 
     def test_host_binary_rejected(self):

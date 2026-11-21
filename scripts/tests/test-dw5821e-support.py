@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Release-22 DW5821e support invariants. Host-only; no modem/network access."""
 from pathlib import Path
-import subprocess, tempfile
+import re, subprocess, tempfile
 R=Path(__file__).resolve().parents[2]; F=R/'package/vtmodem/files'
 HOT=F/'etc/hotplug.d/usb/04_dw5821e'; READY=F/'usr/libexec/dw5821e-net-ready'
 for p in [HOT,READY,F/'etc/init.d/vtmodem-startup',F/'etc/hotplug.d/usb/03_t99w175',F/'lib/netifd/proto/t99w175qmi.sh']:
@@ -15,7 +15,8 @@ assert "type: 'dell-dw5821e'" in (F/'usr/share/vtmodem/telemetry-cache.uc').read
 assert "modem.type == 'dell-dw5821e'" in (F/'usr/share/vtmodem/collector-core.uc').read_text()
 assert "data.type === 'dell-dw5821e'" in (F/'www/luci-static/resources/vtmodem/connection.js').read_text()
 assert '04_dw5821e' in (F/'etc/init.d/vtmodem-startup').read_text()
-assert 'PKG_RELEASE:=22' in (R/'package/vtmodem/Makefile').read_text()
+release=re.search(r'^PKG_RELEASE:=(\d+)$', (R/'package/vtmodem/Makefile').read_text(), re.M)
+assert release and int(release[1]) >= 22
 with tempfile.TemporaryDirectory() as td:
     d=Path(td)/'modem'; d.mkdir(); (d/'bConfigurationValue').write_text('2\n')
     src=f'''INCLUDE_ONLY=1

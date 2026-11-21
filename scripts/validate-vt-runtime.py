@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Runtime inventory and ELF dependency closure for the extracted firmware root."""
 import argparse
+import importlib.util
 from pathlib import Path
 import os
 import re
 import struct
 import subprocess
 
+policy_spec = importlib.util.spec_from_file_location(
+    'vt_modem_policy', Path(__file__).with_name('apply-modem-policy.py'))
+modem_policy = importlib.util.module_from_spec(policy_spec)
+policy_spec.loader.exec_module(modem_policy)
+
 REQUIRED = [
-    'bin/ubus', 'bin/busybox', 'sbin/netifd', 'sbin/procd', 'sbin/logd',
+    'bin/ubus', 'bin/busybox', 'bin/false', 'sbin/netifd', 'sbin/procd', 'sbin/logd',
     'usr/bin/qmicli', 'usr/libexec/qmi-proxy', 'usr/bin/ucode', 'usr/lib/ucode/fs.so',
     'usr/lib/rpcd/ucode.so', 'usr/bin/vt-at.real', 'usr/bin/vt-sms.real',
     'usr/libexec/vtmodem-connection', 'usr/share/vtmodem/connection-worker.uc',
@@ -17,6 +23,13 @@ REQUIRED = [
 # 5G Modem uses uqmi and standard QMI/WWAN helpers as dependencies.
 # Their presence does not change network.modem.proto=t99w175qmi.
 FORBIDDEN = ['usr/sbin/wpad', 'usr/sbin/hostapd']
+DISABLED_MODEM_SERVICES = ('modemmanager', '5gmodem-mm-inhibit')
+POLICY_OVERLAY = Path(__file__).resolve().parents[1] / 'port/rootfs-overlay'
+POLICY_FILES = (
+    'usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service',
+    'etc/config/5gmodem',
+)
+MODEMSWITCH_FILE = 'usr/share/5gmodem/modemswitch.sh'
 
 
 def resolved(root: Path, path: Path) -> Path:
@@ -39,9 +52,28 @@ def validate(root: Path, elf_only: bool = False) -> tuple[int, int]:
             raise ValueError(f'Unused/conflicting client remains: {rel}')
     # Prevent competing daemon from taking the modem's QMI/AT ports at boot.
     if not elf_only:
-        for link in (root / 'etc/rc.d').glob('S*modemmanager'):
-            if link.exists() or link.is_symlink():
-                raise ValueError(f'Conflicting modemmanager autostart: {link.relative_to(root)}')
+        for service in DISABLED_MODEM_SERVICES:
+            for link in (root / 'etc/rc.d').glob('S*' + service):
+                if link.exists() or link.is_symlink():
+                    raise ValueError(f'Conflicting {service} autostart: {link.relative_to(root)}')
+        # Disabling init alone does not stop mmcli from requesting D-Bus
+        # activation, nor 5G Modem coldplug from configuring another interface.
+        # Check the actual image against the reviewed board overlays.
+        for rel in (*POLICY_FILES, MODEMSWITCH_FILE):
+            path = root / rel
+            for part in (path, *path.parents):
+                if part == root:
+                    break
+                if part.is_symlink():
+                    raise ValueError(f'Unsafe modem isolation policy symlink: {rel}')
+            if not path.is_file():
+                raise ValueError(f'Modem isolation policy missing or differs: {rel}')
+            if rel == MODEMSWITCH_FILE:
+                modem_policy.validate_modemswitch(path.read_bytes())
+                if not path.stat().st_mode & 0o111:
+                    raise ValueError(f'Modem autosetup guard is not executable: {rel}')
+            elif path.read_bytes() != (POLICY_OVERLAY / rel).read_bytes():
+                raise ValueError(f'Modem isolation policy missing or differs: {rel}')
     elf_count = deps = 0
     for path in root.rglob('*'):
         if path.is_symlink() or not path.is_file():

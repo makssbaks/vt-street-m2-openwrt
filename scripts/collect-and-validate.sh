@@ -53,7 +53,7 @@ fi
 # fwtool verifies the appended metadata CRC; do not truncate the original.
 "$FWTOOL" -i "$ARTIFACT_DIR/sysupgrade.metadata.json" "$SYSUPGRADE"
 python3 "$REPO_DIR/scripts/validate-vt-image.py" --image "$SYSUPGRADE" \
-  --metadata "$ARTIFACT_DIR/sysupgrade.metadata.json" --extract-to "$TMP/members" \
+  --metadata "$ARTIFACT_DIR/sysupgrade.metadata.json" --extract-to "$TMP/members" 2>&1 \
   | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 KERNEL="$TMP/members/kernel"
 ROOTFS="$TMP/members/root"
@@ -98,18 +98,19 @@ fi
 # The package lives under these paths. Avoid unrelated device nodes in /dev
 # when extracting as an unprivileged CI user.
 "$UNSQUASHFS" -no-progress -d "$TMP/firmware-root" "$ROOTFS" bin sbin etc lib usr www
-python3 "$REPO_DIR/scripts/validate-vtmodem-root.py" "$TMP/firmware-root" \
+python3 "$REPO_DIR/scripts/validate-vtmodem-root.py" "$TMP/firmware-root" 2>&1 \
   | tee "$ARTIFACT_DIR/VT_MODEM_FILES.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 python3 "$REPO_DIR/scripts/validate-vt-image.py" \
-  --platform "$TMP/firmware-root/lib/upgrade/platform.sh" \
+  --platform "$TMP/firmware-root/lib/upgrade/platform.sh" 2>&1 \
   | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 cmp "$UPGRADE_FILE" "$TMP/firmware-root/lib/upgrade/platform.sh"
-python3 "$REPO_DIR/scripts/build-identity.py" --verify "$OPENWRT_DIR" "$TMP/firmware-root"
+python3 "$REPO_DIR/scripts/build-identity.py" --verify "$OPENWRT_DIR" "$TMP/firmware-root" 2>&1 \
+  | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 cp "$TMP/firmware-root/etc/vt-build.json" "$ARTIFACT_DIR/vt-build.json"
 cp "$OPENWRT_DIR/feeds.conf" "$ARTIFACT_DIR/feeds.conf.lock"
-python3 "$REPO_DIR/scripts/validate-vt-runtime.py" "$TMP/firmware-root" \
+python3 "$REPO_DIR/scripts/validate-vt-runtime.py" "$TMP/firmware-root" 2>&1 \
   | tee "$ARTIFACT_DIR/VT_RUNTIME.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
-bash "$REPO_DIR/scripts/test-vtmodem-target.sh" "$TMP/firmware-root" \
+bash "$REPO_DIR/scripts/test-vtmodem-target.sh" "$TMP/firmware-root" 2>&1 \
   | tee "$ARTIFACT_DIR/TARGET_TESTS.txt" | tee -a "$ARTIFACT_DIR/VALIDATION.txt"
 # Promote the candidate images only after every validation gate has passed.
 cp -a "$TARGET_DIR"/* "$ARTIFACT_DIR"/
